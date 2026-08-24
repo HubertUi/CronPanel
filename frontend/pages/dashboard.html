@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard | CronPanel</title>
+    <link rel="stylesheet" href="../assets/css/main.css">
+    <link rel="stylesheet" href="../assets/css/dashboard.css">
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="sidebar-brand">Cron<span class="brand-accent">Panel</span></div>
+        <nav class="sidebar-nav">
+            <a href="dashboard.html" class="nav-item active">Dashboard</a>
+            <span class="nav-item disabled" title="Disponible en próximas fases">Automatizaciones</span>
+            <span class="nav-item disabled" title="Disponible en próximas fases">Scripts</span>
+            <span class="nav-item disabled" title="Disponible en próximas fases">Ejecuciones</span>
+            <span class="nav-separator"></span>
+            <span class="nav-item disabled" title="Disponible en próximas fases">Usuarios</span>
+            <span class="nav-item disabled" title="Disponible en próximas fases">Roles</span>
+            <span class="nav-separator"></span>
+            <span class="nav-item disabled" title="Disponible en próximas fases">Auditoría</span>
+        </nav>
+    </aside>
+
+    <main class="content">
+        <header class="topbar">
+            <h2>Dashboard</h2>
+            <div class="user-box">
+                <span id="user-role" class="role-badge"></span>
+                <span id="user-name"></span>
+                <button id="logout-button" class="btn btn-secondary btn-small">Salir</button>
+            </div>
+        </header>
+
+        <section class="stat-grid">
+            <article class="card stat-card">
+                <h3>Estado del sistema</h3>
+                <p id="system-status" class="status-value">Consultando…</p>
+            </article>
+            <article class="card stat-card">
+                <h3>Versión</h3>
+                <p id="system-version" class="status-value">—</p>
+            </article>
+            <article class="card stat-card">
+                <h3>Base de datos</h3>
+                <p id="database-status" class="status-value">—</p>
+            </article>
+        </section>
+
+        <section class="card">
+            <h3>Bienvenido</h3>
+            <p id="welcome-message" class="muted">
+                Los módulos de automatizaciones, scripts y ejecuciones estarán
+                disponibles en las siguientes fases del proyecto.
+            </p>
+        </section>
+    </main>
+
+    <script src="../assets/js/api.js"></script>
+    <script src="../assets/js/auth.js"></script>
+    <script src="../assets/js/dashboard.js"></script>
+</body>
+</html>

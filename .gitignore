@@ -1,0 +1,29 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# --- Virtual environments ---
+.venv/
+venv/
+
+# --- Secrets / environment (keep .env.example tracked) ---
+.env
+.env.*
+!*.env.example
+
+# --- Databases ---
+*.db
+*.sqlite
+*.sqlite3
+
+# --- Logs ---
+logs/
+*.log
+
+# --- IDEs / OS ---
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

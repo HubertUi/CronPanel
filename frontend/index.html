@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CronPanel</title>
+    <script>
+        (function () {
+            var token = localStorage.getItem("cronpanel_token");
+            window.location.replace(token ? "pages/dashboard.html" : "pages/login.html");
+        })();
+    </script>
+</head>
+<body>
+    <noscript>CronPanel requiere JavaScript habilitado.</noscript>
+</body>
+</html>
