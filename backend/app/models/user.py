@@ -32,6 +32,7 @@ class User(Base):
     )
 
     role = relationship("Role", back_populates="users")
+    cron_jobs = relationship("CronJob", back_populates="owner")
 
     @property
     def role_name(self) -> str:

@@ -1,6 +1,6 @@
 # Arquitectura — CronPanel
 
-> Documento actualizado a la **Fase 2**. Describe lo implementado
+> Documento actualizado a la **Fase 3**. Describe lo implementado
 > y las decisiones que condicionan las fases futuras.
 
 ## Principio general
@@ -31,16 +31,18 @@ Reglas aplicadas:
 | `app/core/permissions.py` | Catálogo de permisos y mapeo rol → permisos |
 | `app/core/logging.py` | Logging rotativo; namespaces `cronpanel.app/.execution/.audit` |
 | `app/core/audit_actions.py` | Constantes de acciones de auditoría (LOGIN_SUCCESS, LOGOUT, etc.) |
+| `app/core/cron_history_actions.py` | Constantes de acciones del historial por tarea (CREATED, UPDATED, …) |
 | `app/core/password_policy.py` | Validación de contraseñas (longitud, complejidad, denylist) |
 | `app/core/rate_limit.py` | Rate limiter deslizante (login por IP + usuario) |
 | `app/database/database.py` | Engine SQLAlchemy, `SessionLocal`, `Base`, `get_db()` |
 | `app/database/init_db.py` | Creación de tablas, seeds de roles, creación del admin |
-| `app/models/` | Modelos ORM (`User`, `Role`, `AuditLog`, `RevokedToken`) |
-| `app/schemas/` | Contratos Pydantic de entrada/salida |
-| `app/repositories/` | Consultas a base de datos |
-| `app/services/` | Lógica de negocio (`auth_service`, `user_service`, `audit_service`) |
+| `app/models/` | Modelos ORM (`User`, `Role`, `AuditLog`, `RevokedToken`, `CronJob`, `CronJobHistory`) |
+| `app/schemas/` | Contratos Pydantic de entrada/salida (`auth`, `user`, `cron_job`) |
+| `app/repositories/` | Consultas a base de datos (incl. `cron_job_repository`) |
+| `app/services/` | Lógica de negocio (`auth_service`, `user_service`, `audit_service`, `cron_job_service`) |
+| `app/utils/cron_validator.py` | Validación, normalización y descripción de expresiones cron |
 | `app/api/dependencies.py` | `get_current_user` (con revocación), `require_permissions()` |
-| `app/api/routes/` | Endpoints FastAPI (transporte puro) |
+| `app/api/routes/` | Endpoints FastAPI (transporte puro), incl. `cron_jobs.py` |
 | `app/utils/datetime.py` | Helpers `utc_now()`, `ensure_utc()` (SQLite-safe) |
 | `app/utils/request.py` | `get_client_ip()` extractor de IP |
 | `frontend/` | SPA mínima sin framework servida como estáticos |
@@ -103,7 +105,55 @@ revoked_at
 expires_at  INDEX
 ```
 
-## Decisiones técnicas relevantes
+## Modelo de datos de tareas cron (Fase 3)
+
+```text
+cron_jobs                cron_job_history
+─────────                ─────────────────
+id           PK          id              PK
+name                     cron_job_id     FK → cron_jobs.id
+description              username        (denormalizado)
+command                  action          (CREATED/UPDATED/ENABLED/DISABLED/DELETED)
+schedule_expression      changes         TEXT JSON (diff de campos)
+minute                   timestamp       INDEX
+hour
+day_of_month             users
+month                    ─────
+day_of_week              id  PK  ──\ (cron_jobs.owner_id)
+human_description(*)  /            \ FK → users.id (CASCADE al borrar usuario)
+is_active
+is_deleted               crea/borra suave: el historial se conserva tras borrar la tarea
+owner_id     FK → users.id (CASCADE)
+created_at / updated_at
+```
+
+(*) `human_description` es calculado en caliente por `cron_validator.describe()` y
+no se persiste (los cinco campos derivados `minute..day_of_week` sí).
+
+## Decisiones técnicas del módulo de tareas (Fase 3)
+
+- **La expresión cron es la única fuente de verdad** (estrategia C). El cliente
+  solo envía `schedule_expression`; el backend valida, normaliza (p. ej.
+  `7 → 0` en día de semana) y deriva los cinco campos. Los schemas usan
+  `extra="forbid"`, por lo que la API rechaza que un cliente envíe esos campos.
+- **Borrado suave**: `DELETE` marca `is_deleted=True` y `is_active=False`.
+  El historial (`cron_job_history`) permanece y es consultable tras el borrado
+  (el endpoint de historial lee la tarea aunque esté borrada).
+- **No ejecución**: el módulo es de datos. `subprocess`, `os.system`,
+  `shell=True`, etc. están prohibidos por diseño y hay un test estático (AST)
+  que lo verifica. Solo un `operator`/`admin` puede editar; nadie ejecuta nada.
+- **Permisos por propiedad en el servicio, permisos por rol en la ruta**: el
+  gate del endpoint comprueba `cron_jobs.*`; el servicio comprueba que el actor
+  sea dueño o `is_full_access_role()`. Un GET de una tarea ajena devuelve 404
+  (no revela existencia); un PUT/PATCH/DELETE de tarea ajena devuelve 403.
+- **Eliminar es solo de admin**: a `operator` le faltan `cron_jobs.delete`.
+- **Doble registro**: las operaciones de tarea escriben en `audit_logs` (vista
+  global, `resource=CRON_JOB`, **nunca incluye el comando**) y en
+  `cron_job_history` (vista por tarea, incluye el diff de campos cambiados).
+- **PUT parcial**: solo se actualizan los campos enviados (`None` se omite).
+  Un PUT sin cambios no genera entrada de historial.
+
+## Decisiones técnicas relevantes (Fases 1-2)
 
 - **bcrypt directo** en lugar de passlib: evita la incompatibilidad mantenida
   de passlib con bcrypt ≥ 4.x sin perder seguridad (coste configurable).

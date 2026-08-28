@@ -1,6 +1,6 @@
 # API — CronPanel
 
-> Referencia de endpoints implementados hasta la Fase 2.
+> Referencia de endpoints implementados hasta la Fase 3.
 > Con `DEBUG=true` está disponible Swagger UI en `/api/docs`.
 
 ## Convenciones generales
@@ -208,6 +208,128 @@ Cambios de rol o desactivación invalidan todas las sesiones del usuario.
 
 ---
 
+## Tareas cron (Automatizaciones)
+
+Todos los endpoints requieren permisos `cron_jobs.*` (el que sea necesario) y
+autenticación. Reglas de propiedad: un usuario no-admin solo ve/administra sus
+propias tareas; GET/historial de tarea ajena → `404`, PUT/PATCH/DELETE →
+`403`; **eliminar y ver/editar tareas de otros requiere rol `admin`**.
+
+El comando se almacena como dato. **Ningún endpoint ejecuta comandos ni
+modifica el crontab del sistema.**
+
+### `GET /api/cron-jobs` — lista de tareas (solo propias para no-admins)
+
+Query params opcionales: `active` (bool), `name` (subcadena), `schedule`
+(subcadena de la expresión), `owner_id`, `limit` (≤500), `offset`.
+
+```json
+[
+  {
+    "id": 1,
+    "name": "Backup nocturno",
+    "description": "Copia de seguridad diaria",
+    "command": "/usr/local/bin/backup.sh",
+    "schedule_expression": "0 2 * * *",
+    "minute": "0", "hour": "2", "day_of_month": "*", "month": "*", "day_of_week": "*",
+    "human_description": "Todos los días a las 02:00",
+    "is_active": true,
+    "owner_id": 1,
+    "created_at": "2026-08-27T10:00:00",
+    "updated_at": "2026-08-27T10:00:00"
+  }
+]
+```
+
+### `POST /api/cron-jobs` — crear tarea (`cron_jobs.create`)
+
+Body (`application/json`):
+
+```json
+{
+  "name": "Backup nocturno",
+  "description": "Copia de seguridad diaria",
+  "command": "/usr/local/bin/backup.sh",
+  "schedule_expression": "0 2 * * *"
+}
+```
+
+Respuesta `201` con la tarea creada (la expresión se normaliza y se derivan
+los cinco campos). Errores:
+
+| Estado | Código | Motivo |
+|---|---|---|
+| 422 | `VALIDATION_ERROR` | Expresión cron inválida, nombre/comando vacíos o campos extra |
+
+### `GET /api/cron-jobs/{cron_job_id}` — obtener tarea
+
+`200` con la tarea. `404 CRON_JOB_NOT_FOUND` si no existe o no es propia.
+
+### `GET /api/cron-jobs/{cron_job_id}/history` — historial de cambios
+
+`200` con lista cronológica (creación → borrado), consultable incluso tras
+borrar la tarea:
+
+```json
+[
+  {
+    "id": 1,
+    "cron_job_id": 1,
+    "username": "admin",
+    "action": "CREATED",
+    "changes": null,
+    "timestamp": "2026-08-27T10:00:00"
+  }
+]
+```
+
+`404 CRON_JOB_NOT_FOUND` si la tarea no existe o no es legible por el usuario.
+
+### `PUT /api/cron-jobs/{cron_job_id}` — actualizar tarea (`cron_jobs.create`)
+
+Solo actualiza los campos enviados (parcial); `description: null` no se aplica.
+Body (todos opcionales): `name`, `description`, `command`, `schedule_expression`.
+
+`200` con la tarea actualizada. Errores: `404 CRON_JOB_NOT_FOUND`,
+`403 CRON_JOB_FORBIDDEN` (tarea ajena) o `422 VALIDATION_ERROR`.
+
+### `PATCH /api/cron-jobs/{cron_job_id}/status` — pausar/activar (`cron_jobs.enable`)
+
+```json
+{ "is_active": false }
+```
+
+`200` con la tarea. Errores: `404`, `403`.
+
+### `DELETE /api/cron-jobs/{cron_job_id}` — borrado suave (`cron_jobs.delete`, solo admin)
+
+`204` sin cuerpo. La tarea se marca `is_deleted`; el historial se conserva.
+La tarea deja de aparecer en listados y consultas. Errores: `404`, `403`.
+
+### `POST /api/cron-jobs/validate` — validar expresión cron (autenticado)
+
+```json
+{ "schedule_expression": "0 2 * * *" }
+```
+
+`200` (siempre), respuesta:
+
+```json
+{
+  "valid": true,
+  "normalized_expression": "0 2 * * *",
+  "fields": ["0", "2", "*", "*", "*"],
+  "description": "Todos los días a las 02:00",
+  "error_code": null,
+  "error_message": null,
+  "error_field": null
+}
+```
+
+Si es inválida, `valid=false` con `error_code`, `error_message` y `error_field`.
+
+---
+
 ## Códigos de estado utilizados
 
 | Estado | Uso |
@@ -217,8 +339,8 @@ Cambios de rol o desactivación invalidan todas las sesiones del usuario.
 | 204 | Eliminación exitosa (sin cuerpo) |
 | 400 | Solicitud incorrecta (contraseña actual errónea) |
 | 401 | No autenticado o credenciales inválidas |
-| 403 | Autenticado sin permisos necesarios |
-| 404 | Recurso no encontrado |
+| 403 | Autenticado sin permisos necesarios o sin propiedad sobre el recurso |
+| 404 | Recurso no encontrado (también tareas ajenas en GET/historial) |
 | 409 | Conflicto (duplicado, último admin, auto-eliminación) |
 | 422 | Validación de entrada fallida |
 | 429 | Rate limit excedido |
@@ -227,10 +349,7 @@ Cambios de rol o desactivación invalidan todas las sesiones del usuario.
 ## Endpoints planificados (NO implementados aún)
 
 ```text
-GET    /api/tasks            POST   /api/tasks
-GET    /api/tasks/{id}       PUT    /api/tasks/{id}
-DELETE /api/tasks/{id}       POST   /api/tasks/{id}/enable
-POST   /api/tasks/{id}/disable   POST  /api/tasks/{id}/execute
+POST   /api/tasks/{id}/execute
 GET    /api/executions       GET    /api/executions/{id}
 GET    /api/scripts          POST   /api/scripts
 GET    /api/scripts/{id}     PUT    /api/scripts/{id}

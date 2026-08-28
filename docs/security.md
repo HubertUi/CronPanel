@@ -1,6 +1,6 @@
 # Seguridad — CronPanel
 
-> Medidas implementadas hasta la Fase 2 y controles planificados.
+> Medidas implementadas hasta la Fase 3 y controles planificados.
 > Prioridad del proyecto: SEGURIDAD > ARQUITECTURA > MANTENIBILIDAD >
 > FUNCIONALIDAD > INTERFAZ.
 
@@ -71,10 +71,41 @@ Acciones registradas:
 | `USER_DEACTIVATE` | Desactivación de cuenta |
 | `ROLE_CHANGE` | Cambio de rol |
 | `TOKEN_REVOKED` | Revocación de tokens (invalidación global) |
+| `CRON_JOB_CREATED` | Creación de tarea cron |
+| `CRON_JOB_UPDATED` | Actualización de tarea cron |
+| `CRON_JOB_ENABLED` | Activación de tarea cron |
+| `CRON_JOB_DISABLED` | Desactivación de tarea cron |
+| `CRON_JOB_DELETED` | Borrado (suave) de tarea cron |
 
 **Regla de seguridad**: los detalles de auditoría nunca contienen contraseñas,
 tokens ni secretos. La función `sanitize_details()` filtra claves sensibles
-como defense in depth.
+como defense in depth. Además, **las entradas de auditoría de tareas cron
+nunca incluyen el comando** (`command`), por diseño y con test dedicado
+(la difusión del comando en la vista global de auditoría no es deseable).
+
+### Tareas cron (Fase 3)
+
+- **No ejecución absoluta**: el módulo es de datos de programación. Prohibidos
+  por diseño y verificados por un test estático (AST sobre los módulos de
+  tareas): `subprocess`, `os.system`, `os.popen`, `shell=True`, `eval/exec`,
+  y cualquier escritura en el crontab del sistema (`/etc/crontab`,
+  `/var/spool/cron`). El frontend informa explícitamente de que el comando se
+  almacena como dato y nunca se ejecuta.
+- **Autorización por rol + propiedad**:
+  - `require_permissions(cron_jobs.*)`: leer/crear/editar/activar/eliminar.
+  - El servicio valida la **propiedad** (o `is_full_access_role()` para admin).
+  - GET/historial de una tarea ajena → **404** (no se revela su existencia).
+  - PUT/PATCH/DELETE de tarea ajena → **403**.
+- **Eliminar es solo de `admin`** (`cron_jobs.delete` no se concede a operator).
+- **Borrado suave + historial consultable**: `is_deleted` preserva la cadena de
+  custodia; los propietarios y el admin siguen pudiendo consultar el historial
+  tras el borrado (esto es una funcionalidad de auditoría, no un bypass).
+- **Validación estricta de entrada**: schemas con `extra="forbid"` (se rechazan
+  campos no esperados) y la expresión cron se valida en el propio schema;
+  los cinco campos derivados (`minute`…`day_of_week`) no son aceptados del
+  cliente (los calcula el servidor desde `schedule_expression`).
+- **Historial por tarea**: `cron_job_history` registra cada acción con un diff
+  JSON de los campos; es un log de auditoría específico del recurso.
 
 ### Administración de usuarios (solo admin)
 
@@ -132,6 +163,7 @@ Cabeceras añadidas a todas las respuestas:
 - **Alembic** gestiona el historial de cambios de esquema.
 - Migración 0001: `roles` + `users` (esquema inicial).
 - Migración 0002: `audit_logs` + `revoked_tokens` + `users.tokens_invalid_before`.
+- Migración 0003: `cron_jobs` + `cron_job_history`.
 - En desarrollo, las tablas se crean automáticamente con `create_all()`.
 
 ### Logs
@@ -151,9 +183,12 @@ Cabeceras añadidas a todas las respuestas:
 ## Plan de hardening (fases futuras)
 
 - Ejecución de scripts con usuario Linux dedicado y least privilege.
-- Validación de comandos/rutas contra path traversal e inyección.
+- Validación de comandos/rutas contra path traversal e inyección (cuando se
+  implemente la ejecución real).
 - HTTPS terminado en nginx + cabeceras CSP.
 - Migración a PostgreSQL y backups programados.
+- Gestor de crontab real (lectura/instalación controlada) con dry-run y
+  confirmación explícita en la Fase 6 del roadmap.
 
 ## Reporte de vulnerabilidades
 

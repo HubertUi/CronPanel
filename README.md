@@ -4,7 +4,7 @@ Panel web para la administración, automatización, monitoreo y auditoría de ta
 programadas mediante `cron`/`crontab` en sistemas Linux, con orientación
 profesional a ciberseguridad.
 
-> **Estado actual: Fase 2 completada** (seguridad hardening).
+> **Estado actual: Fase 3 completada** (tareas cron/crontab).
 > Este documento refleja **únicamente** lo implementado hasta la fecha.
 > Las funcionalidades pendientes se listan en el apartado [Roadmap](#roadmap).
 
@@ -37,9 +37,15 @@ acciones y administración de usuarios con roles y permisos.
 - Health check con verificación de base de datos.
 - Manejo centralizado de errores con mensajes seguros (sin tracebacks al cliente).
 - Logging rotativo separado por namespaces (app / execution / audit).
+- Registro de auditoría en la tabla `audit_logs` para CRUD de tareas
+  (`CRON_JOB_CREATED/UPDATED/ENABLED/DISABLED/DELETED`) **sin incluir jamás el comando**.
+- **Historial por tarea**: `cron_job_history` con diffs JSON de los cambios.
+- **Borrado suave** de tareas: el historial se conserva y sigue siendo consultable.
 - Frontend oscuro estilo administrativo/SOC: login funcional contra la API y
   dashboard inicial con estado del sistema.
-- Suite de pruebas automatizadas (61 tests).
+- **Página "Automatizaciones"**: listado con filtros, creación/edición con
+  validación en vivo de la expresión cron, pausar/activar, historial y borrado.
+- Suite de pruebas automatizadas (132 tests).
 
 ## Tecnologías
 
@@ -60,29 +66,29 @@ CronPanel/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py              # Aplicación FastAPI
-│   │   ├── core/                # config, security, permissions, logging, audit_actions, password_policy, rate_limit
+│   │   ├── core/                # config, security, permissions, logging, audit_actions, cron_history_actions, password_policy, rate_limit
 │   │   ├── database/            # engine, sesión, init_db (tablas + seeds)
-│   │   ├── models/              # ORM: user, role, audit_log, revoked_token
-│   │   ├── schemas/             # Pydantic: auth, user
+│   │   ├── models/              # ORM: user, role, audit_log, revoked_token, cron_job, cron_job_history
+│   │   ├── schemas/             # Pydantic: auth, user, cron_job
 │   │   ├── api/
 │   │   │   ├── dependencies.py  # get_current_user, require_permissions()
-│   │   │   └── routes/          # auth.py, health.py, users.py
-│   │   ├── services/            # auth_service, user_service, audit_service
-│   │   ├── repositories/        # user_repository, role_repository, audit_repository, revoked_token_repository
+│   │   │   └── routes/          # auth.py, health.py, users.py, cron_jobs.py
+│   │   ├── services/            # auth_service, user_service, audit_service, cron_job_service
+│   │   ├── repositories/        # user_repository, role_repository, audit_repository, revoked_token_repository, cron_job_repository
+│   │   ├── utils/               # datetime helpers, request helpers, cron_validator
 │   │   ├── cron/                # (reservado: gestor de crontab)
-│   │   ├── execution/           # (reservado: runner seguro)
-│   │   └── utils/               # datetime helpers, request helpers
+│   │   └── execution/           # (reservado: runner seguro)
 │   ├── alembic/                 # Migraciones de esquema
 │   │   ├── env.py
 │   │   ├── script.py.mako
-│   │   └── versions/            # 0001_initial_schema, 0002_phase2_security
+│   │   └── versions/            # 0001_initial_schema, 0002_phase2_security, 0003_cron_jobs
 │   ├── alembic.ini
-│   ├── tests/                   # pytest: 61 tests
+│   ├── tests/                   # pytest: 132 tests
 │   ├── requirements.txt
 │   └── .env.example
 ├── frontend/
 │   ├── index.html               # Redirección según sesión
-│   ├── pages/                   # login.html, dashboard.html
+│   ├── pages/                   # login.html, dashboard.html, cron-jobs.html
 │   └── assets/                  # css/ y js/ modulares
 ├── docs/                        # architecture, security, installation, api, development
 ├── .gitignore
@@ -153,17 +159,20 @@ python -m pytest -v
 ```
 
 Cobertura actual: autenticación, seguridad (hashing/JWT), permisos RBAC,
-health check y manejo de errores estructurados.
+health check, manejo de errores estructurados, validador de expresiones cron,
+CRUD de tareas, propiedad/permisos, historial, auditoría y no-ejecución.
 
 ## Roles actuales
 
 | Rol | Permisos resumidos |
 |---|---|
-| `admin` | Todos los permisos definidos |
-| `operator` | Tareas (leer/crear/editar/eliminar/ejecutar), leer scripts y ejecuciones |
-| `viewer` | Solo lectura de tareas y ejecuciones |
+| `admin` | Todos los permisos definidos + acceso total a todas las tareas |
+| `operator` | Tareas: leer, crear, editar, pausar/activar (no eliminar) |
+| `viewer` | Solo lectura de tareas (propias) |
 
-La aplicación de estos permisos a endpoints se activará junto al módulo de tareas (Fase 3+).
+La propiedad de las tareas se aplica a nivel de servicio: un `operator` o
+`viewer` solo ve y administra sus propias tareas; solo `admin` (acceso total)
+puede administrar tareas de otros usuarios. Eliminar requiere ser `admin`.
 
 ## Seguridad implementada
 
@@ -177,8 +186,13 @@ La aplicación de estos permisos a endpoints se activará junto al módulo de ta
 - Mensajes de login genéricos (anti-enumeración de usuarios) y equalizador de tiempo.
 - Cabeceras HTTP de seguridad y CORS restringido por configuración.
 - Errores centralizados: detalle técnico solo en logs, mensaje seguro al cliente.
-- **Registro de auditoría**: login, logout, cambio contraseña, CRUD usuarios (nunca incluye contraseñas).
+- **Registro de auditoría**: login, logout, cambio contraseña, CRUD usuarios y
+  CRUD de tareas cron (en este último nunca se registra el comando).
 - **Protección del último admin**: eliminación, desactivación y degradación bloqueadas.
+- **Tareas cron como datos, no como ejecución**: CronPanel nunca ejecuta
+  comandos ni modifica el sistema crontab en esta fase; `command` es un dato.
+  Garantizado por test estático (AST) que impide `subprocess`, `os.system`,
+  `shell=True`, etc. en los módulos de tareas.
 - **Alembic** para migraciones de esquema controladas.
 
 Detalle completo en [`docs/security.md`](docs/security.md).
@@ -189,15 +203,16 @@ Fases pendientes sobre esta base (en orden acordado):
 
 1. ~~Estructura, backend base, config, BD, login, health check~~ ✔ Fase 1
 2. ~~Logout server-side, auditoría, rate limiting, política de contraseñas, cambio contraseña, CRUD usuarios, Alembic~~ ✔ Fase 2
-3. Autorización completa por roles y permisos en endpoints
-4. Modelo de tareas (CRUD de automatizaciones)
-5. Constructor visual de expresiones cron + validador
-6. Gestor de crontab (lectura/instalación controlada, importación)
-7. Módulo de scripts
-8. Ejecución segura (runner con timeout, stdout/stderr, exit code)
-9. Historial de ejecuciones
-10. Dashboard con métricas reales
-11. Auditoría de acciones
+3. ~~Modelo de tareas cron (CRUD de automatizaciones) + RBAC en endpoints +
+   validador de expresiones cron + historial por tarea~~ ✔ Fase 3
+4. Constructor visual de expresiones cron (refinamiento del validador)
+5. Gestor de crontab (lectura/instalación controlada, importación)
+6. Módulo de scripts
+7. Ejecución segura (runner con timeout, stdout/stderr, exit code)
+8. Historial de ejecuciones
+9. Dashboard con métricas reales
+10. Auditoría de acciones (página)
+11. Administración de usuarios/roles (páginas frontend)
 12. Hardening de seguridad
 13. Ampliación de testing
 14. Documentación final y scripts de instalación Linux
@@ -208,6 +223,7 @@ Fases pendientes sobre esta base (en orden acordado):
 - [`docs/security.md`](docs/security.md) — medidas de seguridad
 - [`docs/installation.md`](docs/installation.md) — instalación paso a paso
 - [`docs/api.md`](docs/api.md) — referencia de la API actual
+- [`docs/cron-jobs.md`](docs/cron-jobs.md) — módulo de tareas cron/crontab
 - [`docs/development.md`](docs/development.md) — guía para desarrolladores
 
 ## Licencia

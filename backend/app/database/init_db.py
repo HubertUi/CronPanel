@@ -28,6 +28,8 @@ logger = get_logger("app.init_db")
 
 def create_tables() -> None:
     # Models must be imported so metadata is fully populated.
+    from app.models import cron_job as _cron_job  # noqa: F401
+    from app.models import cron_job_history as _cron_job_history  # noqa: F401
     from app.models import role as _role  # noqa: F401
     from app.models import user as _user  # noqa: F401
 

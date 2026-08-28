@@ -17,6 +17,13 @@ class Permission:
     USERS_UPDATE = "users.update"
     USERS_DELETE = "users.delete"
 
+    # Cron jobs (Phase 3)
+    CRON_JOBS_READ = "cron_jobs.read"
+    CRON_JOBS_CREATE = "cron_jobs.create"
+    CRON_JOBS_UPDATE = "cron_jobs.update"
+    CRON_JOBS_ENABLE = "cron_jobs.enable"
+    CRON_JOBS_DELETE = "cron_jobs.delete"
+
     # Tasks
     TASKS_READ = "tasks.read"
     TASKS_CREATE = "tasks.create"
@@ -56,6 +63,10 @@ _ADMIN_PERMISSIONS = ALL_PERMISSIONS
 
 _OPERATOR_PERMISSIONS = frozenset(
     {
+        Permission.CRON_JOBS_READ,
+        Permission.CRON_JOBS_CREATE,
+        Permission.CRON_JOBS_UPDATE,
+        Permission.CRON_JOBS_ENABLE,
         Permission.TASKS_READ,
         Permission.TASKS_CREATE,
         Permission.TASKS_UPDATE,
@@ -68,6 +79,7 @@ _OPERATOR_PERMISSIONS = frozenset(
 
 _VIEWER_PERMISSIONS = frozenset(
     {
+        Permission.CRON_JOBS_READ,
         Permission.TASKS_READ,
         Permission.EXECUTIONS_READ,
     }
@@ -103,3 +115,13 @@ def get_role_permissions(role_name: str) -> frozenset[str]:
 
 def has_permission(role_name: str, permission: str) -> bool:
     return permission in get_role_permissions(role_name)
+
+
+def is_full_access_role(role_name: str) -> bool:
+    """True when a role is granted every known permission.
+
+    Currently identifies the built-in 'admin' role. Expressing it as a
+    permission-set comparison keeps authorization role-name-free: services
+    use this only to bypass per-owner restrictions for the administrator.
+    """
+    return set(get_role_permissions(role_name)) == set(ALL_PERMISSIONS)

@@ -40,6 +40,8 @@ Estructura de tests:
 | `test_migrations.py` | Alembic upgrade/downgrade sobre DB temporal |
 | `test_permissions.py` | Matriz RBAC admin/operator/viewer |
 | `test_health.py` | Health check y 404 estructurado |
+| `test_cron_validator.py` | Validador de expresiones cron: inválidas, validas, normalización, descripción |
+| `test_cron_jobs.py` | CRUD de tareas, propiedad (404/403), RBAC, historial, auditoría, no-ejecución (AST) |
 
 ## Convenciones del proyecto
 
@@ -78,6 +80,22 @@ utils/       → helpers genéricos (datetime, request)
 5. Tests en `tests/`.
 6. Si hay cambio de esquema: crear migración con `alembic revision`.
 
+### Reglas del módulo de tareas cron
+
+- **Nunca ejecutar nada.** `subprocess`, `os.system`, `os.popen`, `shell=True`,
+  `eval/exec` y escribir en el crontab del sistema están prohibidos en este
+  módulo. Hay un test AST (`test_cron_job_source_never_calls_execution_primitives`)
+  que lo verifica en cada ejecución.
+- La **única fuente de verdad** de la programación es `schedule_expression`.
+  Los cinco campos (`minute`…`day_of_week`) se derivan en el servicio; la API
+  no los acepta del cliente (`extra="forbid"` en los schemas).
+- Validar con `app.utils.cron_validator`; usa sus códigos de error, no strings.
+- La **propiedad** se comprueba en el servicio (no en la ruta): tareas ajenas
+  → 404 en lectura, 403 en escritura. El bypass solo para
+  `permissions.is_full_access_role()`.
+- Toda operación de tarea escribe su acción en `audit_logs` **sin incluir el
+  comando** y en `cron_job_history` con el diff de campos.
+
 ### Commits
 
 Conventional Commits, commits pequeños y descriptivos:
@@ -114,9 +132,9 @@ en modo offline/check). En desarrollo, las tablas se crean con `create_all()`.
 
 ## Orden de fases acordado
 
-Fase 1 (completada) → 2 autenticación completa ✔ → 3 RBAC en endpoints →
-4 tareas → 5 cron builder → 6 cron manager → 7 scripts → 8 ejecución segura →
-9 historial → 10 dashboard → 11 auditoría → 12 hardening → 13 testing →
-14 documentación final.
+Fase 1 (completada) → 2 autenticación completa ✔ → 3 tareas cron ✔ → 4 cron
+builder → 5 cron manager → 6 scripts → 7 ejecución segura → 8 historial de
+ejecuciones → 9 dashboard → 10 auditoría/usuarios (frontend) → 11 hardening →
+12 testing → 13 documentación final.
 
 Regla del proyecto: no avanzar de fase hasta que la actual esté estable y probada.

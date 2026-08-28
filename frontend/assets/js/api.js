@@ -67,4 +67,58 @@ const Api = {
     post(path, body) {
         return this.request(path, { method: "POST", body });
     },
+
+    put(path, body) {
+        return this.request(path, { method: "PUT", body });
+    },
+
+    patch(path, body) {
+        return this.request(path, { method: "PATCH", body });
+    },
+
+    delete(path) {
+        return this.request(path, { method: "DELETE" });
+    },
+
+    /* ---- CronJobs ---- */
+    getCronJobs(filter) {
+        const params = new URLSearchParams();
+        if (filter) {
+            if ("active" in filter) params.set("active", filter.active);
+            if (filter.name) params.set("name", filter.name);
+            if (filter.schedule) params.set("schedule", filter.schedule);
+            if (filter.limit) params.set("limit", filter.limit);
+            if (filter.offset) params.set("offset", filter.offset);
+        }
+        const qs = params.toString();
+        return this.get("/api/cron-jobs" + (qs ? "?" + qs : ""));
+    },
+
+    getCronJob(id) {
+        return this.get("/api/cron-jobs/" + id);
+    },
+
+    createCronJob(body) {
+        return this.post("/api/cron-jobs", body);
+    },
+
+    updateCronJob(id, body) {
+        return this.put("/api/cron-jobs/" + id, body);
+    },
+
+    updateCronJobStatus(id, isActive) {
+        return this.patch("/api/cron-jobs/" + id + "/status", { is_active: isActive });
+    },
+
+    deleteCronJob(id) {
+        return this.delete("/api/cron-jobs/" + id);
+    },
+
+    getCronJobHistory(id) {
+        return this.get("/api/cron-jobs/" + id + "/history");
+    },
+
+    validateCronExpression(scheduleExpression) {
+        return this.post("/api/cron-jobs/validate", { schedule_expression: scheduleExpression });
+    },
 };

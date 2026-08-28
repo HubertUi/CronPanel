@@ -33,7 +33,15 @@ def test_upgrade_creates_all_expected_tables(migration_database):
 
     engine = create_engine(migration_database)
     table_names = inspect(engine).get_table_names()
-    expected = {"alembic_version", "roles", "users", "audit_logs", "revoked_tokens"}
+    expected = {
+        "alembic_version",
+        "roles",
+        "users",
+        "audit_logs",
+        "revoked_tokens",
+        "cron_jobs",
+        "cron_job_history",
+    }
     assert expected.issubset(set(table_names))
 
 
@@ -43,11 +51,13 @@ def test_downgrade_removes_phase2_tables(migration_database):
 
     cfg = _make_config(migration_database)
     command.upgrade(cfg, "head")
-    command.downgrade(cfg, "-1")
+    command.downgrade(cfg, "-2")
 
     engine = create_engine(migration_database)
     table_names = set(inspect(engine).get_table_names())
     assert "audit_logs" not in table_names
     assert "revoked_tokens" not in table_names
+    assert "cron_jobs" not in table_names
+    assert "cron_job_history" not in table_names
     assert "roles" in table_names
     assert "users" in table_names

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Automatizaciones | CronPanel</title>
+    <link rel="stylesheet" href="../assets/css/main.css">
+    <link rel="stylesheet" href="../assets/css/dashboard.css">
+    <link rel="stylesheet" href="../assets/css/cronjobs.css">
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="sidebar-brand">Cron<span class="brand-accent">Panel</span></div>
+        <nav class="sidebar-nav">
+            <a href="dashboard.html" class="nav-item">Dashboard</a>
+            <a href="cron-jobs.html" class="nav-item active">Automatizaciones</a>
+            <span class="nav-item disabled" title="Disponible en próximas fases">Scripts</span>
+            <span class="nav-item disabled" title="Disponible en próximas fases">Ejecuciones</span>
+            <span class="nav-separator"></span>
+            <span class="nav-item disabled" title="Disponible en próximas fases">Usuarios</span>
+            <span class="nav-item disabled" title="Disponible en próximas fases">Roles</span>
+            <span class="nav-separator"></span>
+            <span class="nav-item disabled" title="Disponible en próximas fases">Auditoría</span>
+        </nav>
+    </aside>
+
+    <main class="content">
+        <header class="topbar">
+            <h2>Automatizaciones</h2>
+            <div class="user-box">
+                <span id="user-role" class="role-badge"></span>
+                <span id="user-name"></span>
+                <button id="logout-button" class="btn btn-secondary btn-small">Salir</button>
+            </div>
+        </header>
+
+        <div id="page-alert" class="alert alert-error hidden"></div>
+
+        <section class="toolbar">
+            <input type="text" id="filter-name" class="search-input" placeholder="Filtrar por nombre…">
+            <select id="filter-active" class="search-input">
+                <option value="">Todos los estados</option>
+                <option value="true">Activos</option>
+                <option value="false">Inactivos</option>
+            </select>
+            <button id="new-job-button" class="btn btn-primary">Nueva tarea</button>
+        </section>
+
+        <section class="card">
+            <div class="table-wrap">
+                <table class="cron-table" id="jobs-table">
+                    <thead>
+                        <tr>
+                            <th>Nombre</th>
+                            <th>Programación</th>
+                            <th>Descripción legible</th>
+                            <th>Comando</th>
+                            <th>Estado</th>
+                            <th class="actions-col">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="jobs-body">
+                        <tr id="loading-row"><td colspan="6" class="muted">Cargando…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <!-- Modal: crear / editar tarea -->
+    <div id="job-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <header class="modal-header">
+                <h3 id="modal-title">Nueva tarea</h3>
+                <button type="button" class="modal-close" id="modal-close" aria-label="Cerrar">&times;</button>
+            </header>
+            <form id="job-form" novalidate>
+                <input type="hidden" id="job-id">
+                <div class="form-group">
+                    <label for="job-name">Nombre</label>
+                    <input type="text" id="job-name" maxlength="200" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label for="job-command">Comando o URL</label>
+                    <textarea id="job-command" rows="2" maxlength="2000"></textarea>
+                    <p class="field-hint">Se almacena como dato; nunca se ejecuta desde esta plataforma.</p>
+                </div>
+                <div class="form-group">
+                    <label for="job-schedule">Expresión cron (5 campos)</label>
+                    <input type="text" id="job-schedule" placeholder="0 2 * * *" maxlength="100" autocomplete="off" spellcheck="false">
+                    <p id="schedule-hint" class="field-hint"></p>
+                </div>
+                <div class="form-group">
+                    <label for="job-description">Descripción</label>
+                    <textarea id="job-description" rows="2" maxlength="2000"></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" id="modal-cancel">Cancelar</button>
+                    <button type="submit" class="btn btn-primary" id="modal-save">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: historial de cambios -->
+    <div id="history-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <header class="modal-header">
+                <h3 id="history-title">Historial</h3>
+                <button type="button" class="modal-close" id="history-close" aria-label="Cerrar">&times;</button>
+            </header>
+            <ul id="history-list" class="history-list"></ul>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" id="history-done">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="../assets/js/api.js"></script>
+    <script src="../assets/js/auth.js"></script>
+    <script src="../assets/js/cronjobs.js"></script>
+</body>
+</html>

@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import auth as auth_routes
+from app.api.routes import cron_jobs as cron_jobs_routes
 from app.api.routes import health as health_routes
 from app.api.routes import users as users_routes
 from app.core.config import BASE_DIR, settings
@@ -133,6 +134,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 app.include_router(health_routes.router)
 app.include_router(auth_routes.router)
 app.include_router(users_routes.router)
+app.include_router(cron_jobs_routes.router)
 
 if FRONTEND_DIR.exists():
     # Static frontend served last so API routes take precedence.
