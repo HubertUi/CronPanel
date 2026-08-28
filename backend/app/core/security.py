@@ -18,7 +18,7 @@ TOKEN_TYPE_CLAIM = "type"
 
 def hash_password(password: str) -> str:
     password_bytes = password.encode("utf-8")
-    salt = bcrypt.gensalt(rounds=12)
+    salt = bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS)
     return bcrypt.hashpw(password_bytes, salt).decode("utf-8")
 
 

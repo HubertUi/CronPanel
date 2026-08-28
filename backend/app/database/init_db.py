@@ -16,6 +16,7 @@ import sys
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
+from app.core.password_policy import WeakPasswordError, validate_password
 from app.core.permissions import SYSTEM_ROLES
 from app.core.security import hash_password
 from app.database.database import Base, SessionLocal, engine
@@ -23,8 +24,6 @@ from app.models.role import Role
 from app.models.user import User
 
 logger = get_logger("app.init_db")
-
-MIN_ADMIN_PASSWORD_LENGTH = 8
 
 
 def create_tables() -> None:
@@ -52,8 +51,11 @@ def seed_roles(session: Session) -> None:
 def create_admin_user(
     session: Session, username: str, email: str, password: str
 ) -> User | None:
-    if len(password) < MIN_ADMIN_PASSWORD_LENGTH:
-        raise ValueError("Admin password must be at least 8 characters long.")
+    violations = validate_password(password, username=username)
+    if violations:
+        raise ValueError(
+            "Password policy violations: " + "; ".join(violations)
+        )
 
     admin_role = session.query(Role).filter(Role.name == "admin").one_or_none()
     if admin_role is None:

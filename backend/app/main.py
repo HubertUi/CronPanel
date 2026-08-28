@@ -10,7 +10,7 @@ Layering rules:
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -18,8 +18,10 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import auth as auth_routes
 from app.api.routes import health as health_routes
+from app.api.routes import users as users_routes
 from app.core.config import BASE_DIR, settings
 from app.core.logging import get_logger, setup_logging
+from app.database.database import SessionLocal
 from app.database.init_db import create_tables
 
 logger = get_logger("app.main")
@@ -47,6 +49,14 @@ async def lifespan(_: FastAPI):
         level=logging.DEBUG if settings.DEBUG else logging.INFO
     )
     create_tables()
+    # Purge expired token-revocation entries on startup.
+    try:
+        from app.repositories.revoked_token_repository import RevokedTokenRepository
+
+        with SessionLocal() as session:
+            RevokedTokenRepository(session).purge_expired()
+    except Exception:  # noqa: BLE001
+        pass
     logger.info("%s v%s started.", settings.APP_NAME, settings.APP_VERSION)
     yield
     logger.info("%s stopped.", settings.APP_NAME)
@@ -81,8 +91,8 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 
-@app.exception_handler(status.HTTP_401_UNAUTHORIZED)
-async def unauthorized_handler(_: Request, exc) -> JSONResponse:
+@app.exception_handler(HTTPException)
+async def http_exception_handler(_: Request, exc) -> JSONResponse:
     return _http_error_response(exc)
 
 
@@ -122,6 +132,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 app.include_router(health_routes.router)
 app.include_router(auth_routes.router)
+app.include_router(users_routes.router)
 
 if FRONTEND_DIR.exists():
     # Static frontend served last so API routes take precedence.

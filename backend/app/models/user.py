@@ -1,15 +1,12 @@
 """User model."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.database import Base
-
-
-def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+from app.utils.datetime import utc_now
 
 
 class User(Base):
@@ -28,7 +25,11 @@ class User(Base):
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # Future relationships (Phases 4+): tasks, scripts, audit_logs
+    # Session invalidation threshold: tokens issued before this moment are
+    # rejected (used on password change, deactivation and role changes).
+    tokens_invalid_before: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     role = relationship("Role", back_populates="users")
 

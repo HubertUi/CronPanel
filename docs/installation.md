@@ -1,6 +1,6 @@
 # Instalación — CronPanel
 
-> Guía verificada en la Fase 1. Entorno de desarrollo probado:
+> Guía verificada en la Fase 2. Entorno de desarrollo probado:
 > Windows 11 + Python 3.14. Objetivo de despliegue: Ubuntu Server.
 
 ## Requisitos
@@ -57,6 +57,10 @@ Variables principales del `.env`:
 | `DEBUG` | Activa `/api/docs` y logs verbosos (solo desarrollo) | `true` |
 | `DATABASE_URL` | Conexión SQLAlchemy | `sqlite:///cronpanel.db` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Vida del token (1–1440) | `60` |
+| `BCRYPT_ROUNDS` | Coste de hashing bcrypt (default 12) | `12` |
+| `PASSWORD_MIN_LENGTH` | Longitud mínima de contraseña (default 10) | `10` |
+| `LOGIN_RATE_LIMIT` | Max intentos fallidos de login en la ventana | `5` |
+| `LOGIN_RATE_WINDOW_SECONDS` | Ventana de rate limiting en segundos | `300` |
 | `CORS_ORIGINS` | Orígenes permitidos separados por comas | `http://localhost:8000` |
 
 ### 5. Inicializar base de datos y usuario administrador
@@ -75,9 +79,24 @@ python -m app.database.init_db
 Salida esperada: `Initialization finished.`
 
 El script es idempotente: si el usuario ya existe, no lo duplica.
-La contraseña debe tener al menos 8 caracteres.
+La contraseña debe cumplir la política de seguridad (ver `docs/security.md`).
 
-### 6. Arrancar el servidor
+### 6. Migrar base de datos (Alembic)
+
+Si es la primera vez con Alembic y ya tienes datos en la DB:
+
+```bash
+# Marcar las tablas existentes como migración 0001:
+python -m alembic stamp 0001
+
+# Aplicar migraciones pendientes (añade audit_logs, revoked_tokens, etc.):
+python -m alembic upgrade head
+```
+
+Para nuevas instalaciones, `init_db` crea las tablas automáticamente y puedes
+hacer `python -m alembic stamp head` después.
+
+### 7. Arrancar el servidor
 
 ```bash
 uvicorn app.main:app --reload --port 8000
@@ -89,7 +108,7 @@ uvicorn app.main:app --reload --port 8000
 | `http://localhost:8000/api/health` | Health check JSON |
 | `http://localhost:8000/api/docs` | Swagger UI (solo `DEBUG=true`) |
 
-### 7. Verificar instalación
+### 8. Verificar instalación
 
 1. Abrir `http://localhost:8000/pages/login.html`.
 2. Iniciar sesión con el usuario administrador creado.
@@ -103,6 +122,8 @@ uvicorn app.main:app --reload --port 8000
 | `No module named 'app'` en pytest | Ejecutado fuera de `backend/` | Lanzar pytest desde `backend/` |
 | Puerto 8000 ocupado | Otro proceso escuchando | Usar `--port 8XXX` distinto |
 | Login rechazado tras reiniciar servidor | `SECRET_KEY` cambió entre arranques | Mantener estable la clave en `.env` |
+| `429 RATE_LIMITED` al hacer login | Demasiados intentos fallidos | Esperar el tiempo indicado en `Retry-After` |
+| `WEAK_PASSWORD` al cambiar contraseña | Contraseña no cumple política | Ver reglas en `docs/security.md` |
 
 ## Notas para producción (Ubuntu Server)
 
@@ -110,4 +131,6 @@ uvicorn app.main:app --reload --port 8000
 - Servir estáticos con nginx y terminar TLS allí.
 - `DEBUG=false`, CORS limitado al dominio real.
 - Backups programados de la base de datos.
-- Scripts `scripts/install.sh` / `start.sh` / `stop.sh`: pendientes (fase de documentación/despliegue).
+- Usar PostgreSQL en lugar de SQLite para la base de datos.
+- Configurar `BCRYPT_ROUNDS=12` (o mayor) en producción.
+- Scripts `scripts/install.sh` / `start.sh` / `stop.sh`: pendientes.

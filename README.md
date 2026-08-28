@@ -4,7 +4,7 @@ Panel web para la administración, automatización, monitoreo y auditoría de ta
 programadas mediante `cron`/`crontab` en sistemas Linux, con orientación
 profesional a ciberseguridad.
 
-> **Estado actual: Fase 1 completada** (fundaciones del sistema).
+> **Estado actual: Fase 2 completada** (seguridad hardening).
 > Este documento refleja **únicamente** lo implementado hasta la fecha.
 > Las funcionalidades pendientes se listan en el apartado [Roadmap](#roadmap).
 
@@ -23,15 +23,23 @@ acciones y administración de usuarios con roles y permisos.
 - Arquitectura por capas (routes → services → repositories → models).
 - Backend FastAPI con configuración externa vía `.env`.
 - Autenticación con JWT (HS256) y hashing de contraseñas bcrypt.
-- Modelo de datos inicial: `User` y `Role`, con roles semilla
+- **Logout server-side** con revocación de tokens por `jti` y invalidación global por `tokens_invalid_before`.
+- **Rate limiting** deslizante en login por IP + usuario.
+- **Política de contraseñas** configurable (longitud, complejidad, denylist, anti-username).
+- **Cambio de contraseña** con revocación de todas las sesiones activas.
+- **Registro de auditoría** completo: login, logout, cambio contraseña, CRUD usuarios.
+- **Administración de usuarios** (CRUD completo con RBAC: solo admin).
+- **Protección del último admin**: no se puede eliminar, desactivar ni degradar.
+- Modelo de datos: `User`, `Role`, `AuditLog`, `RevokedToken`, con roles semilla
   `admin`, `operator`, `viewer`.
 - Sistema de permisos RBAC reutilizable (`recurso.acción`) listo para usarse.
+- **Alembic** para migraciones de esquema (dev y producción).
 - Health check con verificación de base de datos.
 - Manejo centralizado de errores con mensajes seguros (sin tracebacks al cliente).
 - Logging rotativo separado por namespaces (app / execution / audit).
 - Frontend oscuro estilo administrativo/SOC: login funcional contra la API y
   dashboard inicial con estado del sistema.
-- Suite de pruebas automatizadas (22 tests).
+- Suite de pruebas automatizadas (61 tests).
 
 ## Tecnologías
 
@@ -40,6 +48,7 @@ acciones y administración de usuarios con roles y permisos.
 | Backend | Python 3, FastAPI, Pydantic v2 |
 | Base de datos | SQLite (desarrollo) + SQLAlchemy 2.0 |
 | Seguridad | PyJWT, bcrypt |
+| Migraciones | Alembic |
 | Servidor ASGI | Uvicorn |
 | Frontend | HTML5, CSS3, JavaScript (ES6), sin frameworks |
 | Testing | pytest + TestClient |
@@ -51,19 +60,24 @@ CronPanel/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py              # Aplicación FastAPI
-│   │   ├── core/                # config, security, permissions, logging
+│   │   ├── core/                # config, security, permissions, logging, audit_actions, password_policy, rate_limit
 │   │   ├── database/            # engine, sesión, init_db (tablas + seeds)
-│   │   ├── models/              # Modelos ORM: user, role
-│   │   ├── schemas/             # Esquemas Pydantic: auth, user
+│   │   ├── models/              # ORM: user, role, audit_log, revoked_token
+│   │   ├── schemas/             # Pydantic: auth, user
 │   │   ├── api/
 │   │   │   ├── dependencies.py  # get_current_user, require_permissions()
-│   │   │   └── routes/          # auth.py, health.py
-│   │   ├── services/            # auth_service.py
-│   │   ├── repositories/        # user_repository, role_repository
+│   │   │   └── routes/          # auth.py, health.py, users.py
+│   │   ├── services/            # auth_service, user_service, audit_service
+│   │   ├── repositories/        # user_repository, role_repository, audit_repository, revoked_token_repository
 │   │   ├── cron/                # (reservado: gestor de crontab)
 │   │   ├── execution/           # (reservado: runner seguro)
-│   │   └── utils/               # (reservado)
-│   ├── tests/                   # pytest: auth, health, permissions, security
+│   │   └── utils/               # datetime helpers, request helpers
+│   ├── alembic/                 # Migraciones de esquema
+│   │   ├── env.py
+│   │   ├── script.py.mako
+│   │   └── versions/            # 0001_initial_schema, 0002_phase2_security
+│   ├── alembic.ini
+│   ├── tests/                   # pytest: 61 tests
 │   ├── requirements.txt
 │   └── .env.example
 ├── frontend/
@@ -153,13 +167,19 @@ La aplicación de estos permisos a endpoints se activará junto al módulo de ta
 
 ## Seguridad implementada
 
-- Contraseñas con bcrypt (coste 12, salt automático). Nunca en texto plano.
+- Contraseñas con bcrypt (coste configurable, salt automático). Nunca en texto plano.
+- **Política de contraseñas**: longitud mínima, mayúsculas, minúsculas, dígitos, denylist de contraseñas comunes, anti-username.
 - JWT firmados con expiración, `jti` único y tipo de token.
+- **Logout server-side**: tokens revocados por `jti` en tabla `revoked_tokens`.
+- **Invalidación global**: `tokens_invalid_before` en usuario para invalidar todas las sesiones tras cambio de contraseña, desactivación o cambio de rol.
+- **Rate limiting** deslizante en login por IP + usuario (configurable).
 - `SECRET_KEY` obligatoria y validada al arranque; fuera del repositorio.
 - Mensajes de login genéricos (anti-enumeración de usuarios) y equalizador de tiempo.
 - Cabeceras HTTP de seguridad y CORS restringido por configuración.
 - Errores centralizados: detalle técnico solo en logs, mensaje seguro al cliente.
-- Logging sin contraseñas ni tokens.
+- **Registro de auditoría**: login, logout, cambio contraseña, CRUD usuarios (nunca incluye contraseñas).
+- **Protección del último admin**: eliminación, desactivación y degradación bloqueadas.
+- **Alembic** para migraciones de esquema controladas.
 
 Detalle completo en [`docs/security.md`](docs/security.md).
 
@@ -168,7 +188,7 @@ Detalle completo en [`docs/security.md`](docs/security.md).
 Fases pendientes sobre esta base (en orden acordado):
 
 1. ~~Estructura, backend base, config, BD, login, health check~~ ✔ Fase 1
-2. Completar autenticación (logout server-side/revocación, auditoría LOGIN/LOGOUT)
+2. ~~Logout server-side, auditoría, rate limiting, política de contraseñas, cambio contraseña, CRUD usuarios, Alembic~~ ✔ Fase 2
 3. Autorización completa por roles y permisos en endpoints
 4. Modelo de tareas (CRUD de automatizaciones)
 5. Constructor visual de expresiones cron + validador

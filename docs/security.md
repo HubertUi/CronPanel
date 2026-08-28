@@ -1,6 +1,6 @@
 # Seguridad — CronPanel
 
-> Medidas implementadas hasta la Fase 1 y controles planificados.
+> Medidas implementadas hasta la Fase 2 y controles planificados.
 > Prioridad del proyecto: SEGURIDAD > ARQUITECTURA > MANTENIBILIDAD >
 > FUNCIONALIDAD > INTERFAZ.
 
@@ -8,13 +8,83 @@
 
 ### Autenticación
 
-- Contraseñas hasheadas con **bcrypt**, coste 12, salt automático por hash.
+- Contraseñas hasheadas con **bcrypt** (coste configurable vía `BCRYPT_ROUNDS`).
+  Salt automático por hash.
 - Nunca se almacenan ni registran contraseñas en texto plano.
 - Tokens **JWT HS256** con expiración (`exp`), identificador único (`jti`),
   tipo de token (`type=access`) y datos mínimos del usuario.
 - `SECRET_KEY` obligatoria (≥ 32 caracteres), validada al arranque, cargada
   desde `.env`; jamás en el código ni en el repositorio.
 - Validación de algoritmo permitido y rango de expiración del token en config.
+
+### Gestión de sesiones
+
+- **Logout server-side** con revocación de tokens por `jti` en tabla
+  `revoked_tokens`. El token se invalida inmediatamente tras el logout.
+- **Invalidación global** vía `users.tokens_invalid_before`: todos los tokens
+  anteriores a esta marca de tiempo son rechazados, incluso si no están en la
+  blacklist. Se aplica en:
+  - Cambio de contraseña
+  - Desactivación de cuenta
+  - Cambio de rol (porque el `role` está embebido en el JWT)
+- **Purga de tokens expirados**: en cada arranque del servidor y
+  oportunísticamente durante logout.
+
+### Política de contraseñas (configurable)
+
+| Regla | Configuración |
+|---|---|
+| Longitud mínima | `PASSWORD_MIN_LENGTH` (default 10) |
+| Mayúscula requerida | Sí |
+| Minúscula requerida | Sí |
+| Dígito requerido | Sí |
+| Denylist | ~18 contraseñas comunes (password123, admin123, etc.) |
+| Anti-username | No puede contener el nombre de usuario |
+| Vacía | Siempre rechazada |
+
+### Rate limiting
+
+- Rate limiter deslizante por IP + usuario en login.
+- Configurable vía `LOGIN_RATE_LIMIT` (max intentos) y `LOGIN_RATE_WINDOW_SECONDS` (ventana).
+- Reseteado tras login exitoso.
+- Respuesta `429 Too Many Requests` con header `Retry-After`.
+
+### Registro de auditoría
+
+Tabla `audit_logs` con campos: user_id, username, action, resource, resource_id,
+ip_address, details (JSON sanitizado), timestamp.
+
+Acciones registradas:
+
+| Acción | Descripción |
+|---|---|
+| `LOGIN_SUCCESS` | Login correcto |
+| `LOGIN_FAILED` | Credenciales incorrectas (no incluye la contraseña) |
+| `LOGOUT` | Cierre de sesión |
+| `PASSWORD_CHANGE` | Cambio de contraseña propio |
+| `PASSWORD_CHANGE_FAILED` | Intento con contraseña actual incorrecta |
+| `PASSWORD_RESET` | Reseteo de contraseña por admin |
+| `USER_CREATE` | Creación de usuario |
+| `USER_UPDATE` | Actualización de usuario |
+| `USER_DELETE` | Eliminación de usuario |
+| `USER_ACTIVATE` | Activación de cuenta |
+| `USER_DEACTIVATE` | Desactivación de cuenta |
+| `ROLE_CHANGE` | Cambio de rol |
+| `TOKEN_REVOKED` | Revocación de tokens (invalidación global) |
+
+**Regla de seguridad**: los detalles de auditoría nunca contienen contraseñas,
+tokens ni secretos. La función `sanitize_details()` filtra claves sensibles
+como defense in depth.
+
+### Administración de usuarios (solo admin)
+
+- CRUD completo: crear, listar, obtener, actualizar, eliminar.
+- **Protección del último admin**: no se puede eliminar, desactivar ni degradar
+  al único administrador activo.
+- **Protección contra auto-eliminación**: un usuario no puede eliminarse a sí mismo.
+- **Protección contra auto-degradación**: un usuario no puede cambiar su propio rol.
+- Los errores de negocio se devuelven con códigos estables: `LAST_ADMIN_PROTECTED`,
+  `SELF_DELETE_FORBIDDEN`, `SELF_ROLE_CHANGE`, `DUPLICATE_IDENTITY`.
 
 ### Anti-enumeración y timing attacks
 
@@ -28,8 +98,7 @@
 - Permisos con convención `recurso.acción` (`tasks.execute`, `users.delete`, …).
 - Mapeo centralizado rol → permisos en `core/permissions.py`. Prohibido
   comprobar `user.role == "admin"` en el código de negocio.
-- Fábrica de dependencias `require_permissions(...)` lista para proteger
-  endpoints a partir de la Fase 3.
+- Fábrica de dependencias `require_permissions(...)` protege endpoints.
 - Roles semilla: `admin` (todos), `operator` (tareas + lectura scripts/
   ejecuciones), `viewer` (solo lectura tareas/ejecuciones).
 
@@ -55,33 +124,34 @@ Cabeceras añadidas a todas las respuestas:
 { "error": "INTERNAL_SERVER_ERROR", "message": "Ha ocurrido un error interno..." }
 ```
 
+- Todos los `HTTPException` se procesan con formato consistente `{"error", "message"}`.
 - Errores de validación (422) con formato estable `error/message/details`.
-- Errores HTTP con códigos de error estables (`UNAUTHORIZED`, `FORBIDDEN`, …).
+
+### Migraciones de esquema
+
+- **Alembic** gestiona el historial de cambios de esquema.
+- Migración 0001: `roles` + `users` (esquema inicial).
+- Migración 0002: `audit_logs` + `revoked_tokens` + `users.tokens_invalid_before`.
+- En desarrollo, las tablas se crean automáticamente con `create_all()`.
 
 ### Logs
 
 - Separados por namespace: aplicación (`cronpanel.app`), ejecuciones
-  (`cronpanel.execution`, reservado) y auditoría (`cronpanel.audit`, reservado).
+  (`cronpanel.execution`, reservado) y auditoría (`cronpanel.audit`).
 - Rotación por tamaño (5 MB × 3). No se registran contraseñas ni tokens.
 - Los intentos fallidos de login se registran sin incluir la contraseña.
 
-## Limitaciones conocidas (aceptadas en Fase 1)
+## Limitaciones conocidas (aceptadas)
 
-1. **Logout stateless**: el endpoint autentica pero el token sigue válido hasta
-   expirar; el cliente lo descarta localmente.
-2. **Sin rate limiting** en login todavía.
-3. **Token en localStorage**: susceptible a XSS; mitigado al no usar librerías
+1. **Token en localStorage**: susceptible a XSS; mitigado al no usar librerías
    externas ni `innerHTML` con datos de usuario. Revisión en hardening.
-4. **SQLite en desarrollo**; para producción se prevé PostgreSQL.
-5. Sin HTTPS obligatorio aún (pendiente de reverse proxy en instalación Linux).
+2. **SQLite en desarrollo**; para producción se prevé PostgreSQL.
+3. Sin HTTPS obligatorio aún (pendiente de reverse proxy en instalación Linux).
 
 ## Plan de hardening (fases futuras)
 
-- Revocación/blacklist de tokens por `jti` (logout real server-side).
-- Rate limiting y bloqueo temporal por intentos fallidos.
 - Ejecución de scripts con usuario Linux dedicado y least privilege.
 - Validación de comandos/rutas contra path traversal e inyección.
-- Auditoría completa de acciones sensibles (`LOGIN`, `CRUD_*`, `ROLE_CHANGE`…).
 - HTTPS terminado en nginx + cabeceras CSP.
 - Migración a PostgreSQL y backups programados.
 

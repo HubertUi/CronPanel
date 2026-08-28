@@ -1,15 +1,5 @@
 """Tests for the authentication endpoints."""
 
-import pytest
-
-
-@pytest.fixture()
-def login_payload(admin_account) -> dict:
-    return {
-        "username": admin_account["username"],
-        "password": admin_account["password"],
-    }
-
 
 def test_login_success_returns_token(client, seeded_db, login_payload):
     response = client.post("/api/auth/login", data=login_payload)
@@ -41,7 +31,6 @@ def test_login_unknown_user_same_error_as_wrong_password(client, seeded_db, admi
         data={"username": admin_account["username"], "password": "totally-wrong"},
     )
 
-    # Same status and same error code: prevents username enumeration.
     assert unknown_response.status_code == wrong_password_response.status_code == 401
     assert unknown_response.json() == wrong_password_response.json()
 
@@ -90,3 +79,26 @@ def test_logout_with_valid_session(client, seeded_db, auth_headers):
 
     assert response.status_code == 200
     assert "message" in response.json()
+
+
+def test_revoked_token_rejected_after_logout(client, seeded_db, login_payload):
+    login = client.post("/api/auth/login", data=login_payload)
+    token = login.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    client.post("/api/auth/logout", headers=headers)
+
+    response = client.get("/api/auth/me", headers=headers)
+    assert response.status_code == 401
+
+
+def test_other_session_survives_single_logout(client, seeded_db, login_payload):
+    token_a = client.post("/api/auth/login", data=login_payload).json()["access_token"]
+    token_b = client.post("/api/auth/login", data=login_payload).json()["access_token"]
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+
+    client.post("/api/auth/logout", headers=headers_a)
+
+    assert client.get("/api/auth/me", headers=headers_b).status_code == 200
+    assert client.get("/api/auth/me", headers=headers_a).status_code == 401

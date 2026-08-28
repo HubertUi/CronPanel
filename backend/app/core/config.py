@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     SECRET_KEY: str = ""
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    BCRYPT_ROUNDS: int = 12
+
+    # Login brute-force protection
+    LOGIN_RATE_LIMIT: int = 5
+    LOGIN_RATE_WINDOW_SECONDS: int = 300
+
+    # Password policy
+    PASSWORD_MIN_LENGTH: int = 10
 
     # Database
     DATABASE_URL: str = f"sqlite:///{(BASE_DIR / 'cronpanel.db').as_posix()}"
@@ -66,6 +74,34 @@ class Settings(BaseSettings):
     def validate_token_expiration(cls, value: int) -> int:
         if not 1 <= value <= 1440:
             raise ValueError("ACCESS_TOKEN_EXPIRE_MINUTES must be between 1 and 1440.")
+        return value
+
+    @field_validator("BCRYPT_ROUNDS")
+    @classmethod
+    def validate_bcrypt_rounds(cls, value: int) -> int:
+        if not 4 <= value <= 31:
+            raise ValueError("BCRYPT_ROUNDS must be between 4 and 31.")
+        return value
+
+    @field_validator("LOGIN_RATE_LIMIT")
+    @classmethod
+    def validate_login_rate_limit(cls, value: int) -> int:
+        if not 1 <= value <= 100:
+            raise ValueError("LOGIN_RATE_LIMIT must be between 1 and 100.")
+        return value
+
+    @field_validator("LOGIN_RATE_WINDOW_SECONDS")
+    @classmethod
+    def validate_login_rate_window(cls, value: int) -> int:
+        if not 1 <= value <= 86400:
+            raise ValueError("LOGIN_RATE_WINDOW_SECONDS must be between 1 and 86400.")
+        return value
+
+    @field_validator("PASSWORD_MIN_LENGTH")
+    @classmethod
+    def validate_password_min_length(cls, value: int) -> int:
+        if not 8 <= value <= 128:
+            raise ValueError("PASSWORD_MIN_LENGTH must be between 8 and 128.")
         return value
 
     @property

@@ -22,6 +22,9 @@ venv/
 logs/
 *.log
 
+# --- Local verification scripts ---
+backend/smoke_test.py
+
 # --- IDEs / OS ---
 .idea/
 .vscode/

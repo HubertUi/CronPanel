@@ -1,6 +1,6 @@
 # Arquitectura — CronPanel
 
-> Documento actualizado a la **Fase 1**. Describe únicamente lo implementado
+> Documento actualizado a la **Fase 2**. Describe lo implementado
 > y las decisiones que condicionan las fases futuras.
 
 ## Principio general
@@ -10,7 +10,7 @@ Arquitectura por capas con dependencias en una sola dirección:
 ```text
 HTTP (routes) → servicios (business logic) → repositorios (datos) → modelos ORM
                         ↑
-              core (config, security, permissions, logging)
+              core (config, security, permissions, logging, audit_actions, password_policy, rate_limit)
 ```
 
 Reglas aplicadas:
@@ -19,6 +19,8 @@ Reglas aplicadas:
 - El acceso a base de datos vive exclusivamente en `repositories/`.
 - La seguridad es transversal (`core/security.py`, `core/permissions.py`,
   `api/dependencies.py`), nunca comprobaciones ad-hoc en controladores.
+- Errores de negocio se propagan como excepciones del dominio desde services
+  hacia routes, donde se traducen a respuestas HTTP.
 
 ## Estructura de directorios
 
@@ -28,61 +30,91 @@ Reglas aplicadas:
 | `app/core/security.py` | Hashing bcrypt y emisión/validación JWT |
 | `app/core/permissions.py` | Catálogo de permisos y mapeo rol → permisos |
 | `app/core/logging.py` | Logging rotativo; namespaces `cronpanel.app/.execution/.audit` |
+| `app/core/audit_actions.py` | Constantes de acciones de auditoría (LOGIN_SUCCESS, LOGOUT, etc.) |
+| `app/core/password_policy.py` | Validación de contraseñas (longitud, complejidad, denylist) |
+| `app/core/rate_limit.py` | Rate limiter deslizante (login por IP + usuario) |
 | `app/database/database.py` | Engine SQLAlchemy, `SessionLocal`, `Base`, `get_db()` |
 | `app/database/init_db.py` | Creación de tablas, seeds de roles, creación del admin |
-| `app/models/` | Modelos ORM (`User`, `Role`) |
+| `app/models/` | Modelos ORM (`User`, `Role`, `AuditLog`, `RevokedToken`) |
 | `app/schemas/` | Contratos Pydantic de entrada/salida |
 | `app/repositories/` | Consultas a base de datos |
-| `app/services/` | Lógica de negocio (`auth_service`) |
-| `app/api/dependencies.py` | `get_current_user`, fábrica `require_permissions()` |
+| `app/services/` | Lógica de negocio (`auth_service`, `user_service`, `audit_service`) |
+| `app/api/dependencies.py` | `get_current_user` (con revocación), `require_permissions()` |
 | `app/api/routes/` | Endpoints FastAPI (transporte puro) |
+| `app/utils/datetime.py` | Helpers `utc_now()`, `ensure_utc()` (SQLite-safe) |
+| `app/utils/request.py` | `get_client_ip()` extractor de IP |
 | `frontend/` | SPA mínima sin framework servida como estáticos |
+| `alembic/` | Migraciones de esquema (env.py, versions/) |
 
 Directorios reservados por diseño (fases futuras): `app/cron/` (gestor de
-crontab), `app/execution/` (runner seguro), `app/utils/`.
+crontab), `app/execution/` (runner seguro).
 
-## Flujo de autenticación
+## Flujo de autenticación (Fase 2)
 
 1. `POST /api/auth/login` recibe credenciales (form data estándar OAuth2).
-2. `auth_service.authenticate_user()` verifica usuario activo + bcrypt.
+2. Se verifica **rate limiting** por IP + usuario; si está bloqueado → 429.
+3. `auth_service.authenticate_user()` verifica usuario activo + bcrypt.
    - Usuario inexistente: se ejecuta un hash dummy para igualar el tiempo de
      respuesta (anti-enumeración por timing).
    - Todos los fallos devuelven el mismo error genérico `INVALID_CREDENTIALS`.
-3. Se actualiza `last_login_at` y se emite JWT HS256 con claims
+   - Cada intento (exitoso o fallido) genera una entrada de **auditoría**.
+4. Se actualiza `last_login_at` y se emite JWT HS256 con claims
    `sub`, `username`, `role`, `iat`, `exp`, `jti`, `type=access`.
-4. Las rutas protegidas usan `get_current_user`, que valida firma, expiración,
-   tipo de token y que el usuario siga existiendo y activo en BD.
+5. Las rutas protegidas usan `get_current_user`, que valida:
+   - Firma y expiración del token.
+   - Que el `jti` no esté en la tabla `revoked_tokens` (logout server-side).
+   - Que el `iat` sea posterior a `tokens_invalid_before` del usuario
+     (invalidación global tras cambio de contraseña, desactivación o cambio de rol).
+   - Que el usuario siga existiendo y activo en BD.
 
-## Modelo de datos actual
+## Dual revocación de tokens
+
+El sistema usa dos mecanismos complementarios:
+
+| Mecanismo | Tabla/Campo | Cuándo se usa | Alcance |
+|---|---|---|---|
+| JTI revocation | `revoked_tokens.jti` | Logout individual | Un token específico |
+| Threshold invalidation | `users.tokens_invalid_before` | Cambio contraseña, desactivación, cambio rol | Todos los tokens del usuario |
+
+El threshold (`tokens_invalid_before`) se usa porque el `role` está embebido
+en el JWT y al cambiar de rol los tokens antiguos contienen un claim obsoleto.
+
+## Modelo de datos actual (Fase 2)
 
 ```text
-roles                users
-─────                ─────
-id    PK             id          PK
-name  UNIQUE         username    UNIQUE
-desc                 email       UNIQUE
-                     hashed_password
-                     is_active
-                     role_id     FK → roles.id
-                     created_at / updated_at / last_login_at
-```
+roles                users                    audit_logs
+─────                ─────                    ─────────
+id    PK             id          PK           id          PK
+name  UNIQUE         username    UNIQUE       user_id     FK → users.id (SET NULL)
+desc                 email       UNIQUE       username
+                     hashed_password          action      INDEX
+                     is_active                resource / resource_id
+                     role_id     FK → roles.id  ip_address
+                     created_at / updated_at   details     TEXT (JSON sanitizado)
+                     last_login_at            timestamp   INDEX
+                     tokens_invalid_before
 
-Relaciones planificadas (no creadas aún): `User → tasks`, `User → scripts`,
-`Task → executions`, `Task → script`, `AuditLog → User`.
+revoked_tokens
+──────────────
+id          PK
+jti         UNIQUE INDEX
+user_id     FK → users.id (SET NULL)
+revoked_at
+expires_at  INDEX
+```
 
 ## Decisiones técnicas relevantes
 
 - **bcrypt directo** en lugar de passlib: evita la incompatibilidad mantenida
-  de passlib con bcrypt ≥ 4.x sin perder seguridad (coste 12).
+  de passlib con bcrypt ≥ 4.x sin perder seguridad (coste configurable).
 - **PyJWT** en lugar de python-jose: mantenimiento activo e historial CVE más limpio.
 - **Login por form data OAuth2**: compatible con el botón Authorize de Swagger
   y con envío estándar desde el frontend.
 - **Frontend montado como StaticFiles al final**: garantiza precedencia de las
-  rutas `/api/*` y despliegue de desarrollo en un solo proceso. En producción
-  se recomienda servir estáticos con nginx.
-- **Health route dedicada** (`routes/health.py`): separa el chequeo operativo
-  del futuro dashboard de métricas (`dashboard.py` llegará con Fase 10).
-- **Tablas creadas en el lifespan** para desarrollo; la migración formal con
-  Alembic queda pendiente para cuando el esquema crezca.
-- **Logout stateless documentado**: el cliente descarta el token; la
-  revocación server-side (blacklist por `jti`) está planificada en hardening.
+  rutas `/api/*` y despliegue de desarrollo en un solo proceso.
+- **Alembic** para migraciones de esquema. Las tablas se crean con
+  `create_all()` en desarrollo; Alembic gestiona el historial de cambios.
+- **`ensure_utc()`** normaliza datetimes de SQLite (que pierde timezone) para
+  comparaciones correctas con timestamps JWT (que son enteros UTC).
+- **Handler HTTPException genérico** en `main.py`: todos los HTTPException se
+  devuelven con formato `{"error", "message"}` consistente, no solo 401.
