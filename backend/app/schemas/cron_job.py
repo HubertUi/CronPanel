@@ -36,6 +36,7 @@ class CronJobCreate(BaseModel):
     description: str | None = Field(default=None, max_length=DESCRIPTION_MAX_LENGTH)
     command: str = Field(min_length=1, max_length=COMMAND_MAX_LENGTH)
     schedule_expression: str = Field(min_length=1, max_length=EXPRESSION_MAX_LENGTH)
+    script_id: int | None = None
 
     @field_validator("name")
     @classmethod
@@ -66,6 +67,7 @@ class CronJobUpdate(BaseModel):
     schedule_expression: str | None = Field(
         default=None, min_length=1, max_length=EXPRESSION_MAX_LENGTH
     )
+    script_id: int | None = None
 
     @field_validator("name")
     @classmethod
@@ -111,6 +113,8 @@ class CronJobResponse(BaseModel):
     human_description: str
     is_active: bool
     owner_id: int
+    script_id: int | None = None
+    script_name: str | None = None
     created_at: datetime
     updated_at: datetime
 

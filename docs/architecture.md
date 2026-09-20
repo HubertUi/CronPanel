@@ -1,6 +1,6 @@
 # Arquitectura — CronPanel
 
-> Documento actualizado a la **Fase 3**. Describe lo implementado
+> Documento actualizado a la **Fase 4**. Describe lo implementado
 > y las decisiones que condicionan las fases futuras.
 
 ## Principio general
@@ -10,7 +10,7 @@ Arquitectura por capas con dependencias en una sola dirección:
 ```text
 HTTP (routes) → servicios (business logic) → repositorios (datos) → modelos ORM
                         ↑
-              core (config, security, permissions, logging, audit_actions, password_policy, rate_limit)
+              core (config, security, permissions, logging, audit_actions, execution_status, password_policy, rate_limit)
 ```
 
 Reglas aplicadas:
@@ -30,26 +30,27 @@ Reglas aplicadas:
 | `app/core/security.py` | Hashing bcrypt y emisión/validación JWT |
 | `app/core/permissions.py` | Catálogo de permisos y mapeo rol → permisos |
 | `app/core/logging.py` | Logging rotativo; namespaces `cronpanel.app/.execution/.audit` |
-| `app/core/audit_actions.py` | Constantes de acciones de auditoría (LOGIN_SUCCESS, LOGOUT, etc.) |
+| `app/core/audit_actions.py` | Constantes de acciones de auditoría (LOGIN_SUCCESS, LOGOUT, SCRIPT_*, EXECUTION_*, etc.) |
+| `app/core/execution_status.py` | Constantes de estados de ejecución (RUNNING, SUCCESS, FAILED, TIMED_OUT) |
 | `app/core/cron_history_actions.py` | Constantes de acciones del historial por tarea (CREATED, UPDATED, …) |
 | `app/core/password_policy.py` | Validación de contraseñas (longitud, complejidad, denylist) |
 | `app/core/rate_limit.py` | Rate limiter deslizante (login por IP + usuario) |
 | `app/database/database.py` | Engine SQLAlchemy, `SessionLocal`, `Base`, `get_db()` |
 | `app/database/init_db.py` | Creación de tablas, seeds de roles, creación del admin |
-| `app/models/` | Modelos ORM (`User`, `Role`, `AuditLog`, `RevokedToken`, `CronJob`, `CronJobHistory`) |
-| `app/schemas/` | Contratos Pydantic de entrada/salida (`auth`, `user`, `cron_job`) |
-| `app/repositories/` | Consultas a base de datos (incl. `cron_job_repository`) |
-| `app/services/` | Lógica de negocio (`auth_service`, `user_service`, `audit_service`, `cron_job_service`) |
+| `app/models/` | Modelos ORM (`User`, `Role`, `AuditLog`, `RevokedToken`, `CronJob`, `CronJobHistory`, `Script`, `Execution`) |
+| `app/schemas/` | Contratos Pydantic de entrada/salida (`auth`, `user`, `cron_job`, `script`, `execution`) |
+| `app/repositories/` | Consultas a base de datos (incl. `cron_job_repository`, `script_repository`, `execution_repository`) |
+| `app/services/` | Lógica de negocio (`auth_service`, `user_service`, `audit_service`, `cron_job_service`, `script_service`, `execution_service`) |
 | `app/utils/cron_validator.py` | Validación, normalización y descripción de expresiones cron |
 | `app/api/dependencies.py` | `get_current_user` (con revocación), `require_permissions()` |
-| `app/api/routes/` | Endpoints FastAPI (transporte puro), incl. `cron_jobs.py` |
+| `app/api/routes/` | Endpoints FastAPI (transporte puro): `auth`, `health`, `users`, `cron_jobs`, `scripts`, `executions` |
 | `app/utils/datetime.py` | Helpers `utc_now()`, `ensure_utc()` (SQLite-safe) |
 | `app/utils/request.py` | `get_client_ip()` extractor de IP |
+| `app/execution/` | Runner seguro: `policy.py` (allow-list), `executor.py` (único importador de `subprocess`) |
 | `frontend/` | SPA mínima sin framework servida como estáticos |
 | `alembic/` | Migraciones de esquema (env.py, versions/) |
 
-Directorios reservados por diseño (fases futuras): `app/cron/` (gestor de
-crontab), `app/execution/` (runner seguro).
+Directorio reservado por diseño (fase futura): `app/cron/` (gestor de crontab).
 
 ## Flujo de autenticación (Fase 2)
 
@@ -81,7 +82,7 @@ El sistema usa dos mecanismos complementarios:
 El threshold (`tokens_invalid_before`) se usa porque el `role` está embebido
 en el JWT y al cambiar de rol los tokens antiguos contienen un claim obsoleto.
 
-## Modelo de datos actual (Fase 2)
+## Modelo de datos actual (Fases 2-3)
 
 ```text
 roles                users                    audit_logs
@@ -114,6 +115,7 @@ id           PK          id              PK
 name                     cron_job_id     FK → cron_jobs.id
 description              username        (denormalizado)
 command                  action          (CREATED/UPDATED/ENABLED/DISABLED/DELETED)
+script_id    FK → scripts.id (SET NULL, Fase 4)
 schedule_expression      changes         TEXT JSON (diff de campos)
 minute                   timestamp       INDEX
 hour
@@ -130,6 +132,29 @@ created_at / updated_at
 (*) `human_description` es calculado en caliente por `cron_validator.describe()` y
 no se persiste (los cinco campos derivados `minute..day_of_week` sí).
 
+## Modelo de datos de ejecución (Fase 4)
+
+```text
+scripts                                executions
+───────                                ──────────
+id           PK                        id          PK
+name         UNIQUE                    cron_job_id FK → cron_jobs.id (SET NULL)
+description                            script_id   FK → scripts.id  (SET NULL)
+path         UNIQUE (abs, en allow-list)  trigger     (manual)
+is_enabled                            status      (running/success/failed/timed_out)
+is_deleted                             exit_code
+created_by   FK → users.id (SET NULL)  stdout      (recortado)
+created_at / updated_at                stderr
+                                       error
+                                       duration_ms
+                                       username / ip_address  (denormalizados)
+                                       started_at / finished_at
+```
+
+Propiedades clave: borrado **suave** de scripts (bloqueado con `409` si una
+tarea no borrada lo referencia), FKs `SET NULL` para conservar historial de
+ejecuciones y de tareas, y `executions` inmutable una vez finalizada.
+
 ## Decisiones técnicas del módulo de tareas (Fase 3)
 
 - **La expresión cron es la única fuente de verdad** (estrategia C). El cliente
@@ -139,9 +164,14 @@ no se persiste (los cinco campos derivados `minute..day_of_week` sí).
 - **Borrado suave**: `DELETE` marca `is_deleted=True` y `is_active=False`.
   El historial (`cron_job_history`) permanece y es consultable tras el borrado
   (el endpoint de historial lee la tarea aunque esté borrada).
-- **No ejecución**: el módulo es de datos. `subprocess`, `os.system`,
-  `shell=True`, etc. están prohibidos por diseño y hay un test estático (AST)
-  que lo verifica. Solo un `operator`/`admin` puede editar; nadie ejecuta nada.
+- **El `command` libre nunca se ejecuta**: el módulo de tareas es de datos.
+  `subprocess`, `os.system`, `shell=True`, etc. están prohibidos por diseño y
+  hay un test estático (AST) que lo verifica. La única ejecución posible (Fase
+  4) es la del `script_id` enlazado, gestionada por `execution_service`; el
+  `command` se ignora.
+- **Enlace opcional a script**: `cron_job_service` valida el `script_id`
+  contra un script registrado, no borrado y habilitado
+  (`ScriptReferenceNotFoundError` si no existe).
 - **Permisos por propiedad en el servicio, permisos por rol en la ruta**: el
   gate del endpoint comprueba `cron_jobs.*`; el servicio comprueba que el actor
   sea dueño o `is_full_access_role()`. Un GET de una tarea ajena devuelve 404
@@ -152,6 +182,31 @@ no se persiste (los cinco campos derivados `minute..day_of_week` sí).
   `cron_job_history` (vista por tarea, incluye el diff de campos cambiados).
 - **PUT parcial**: solo se actualizan los campos enviados (`None` se omite).
   Un PUT sin cambios no genera entrada de historial.
+
+## Decisiones técnicas del motor de ejecución (Fase 4)
+
+- **Allow-list con ruta canonizada**: al registrar/actualizar el script, la
+  ruta se resuelve con `Path.resolve(strict=True)` y debe quedar dentro de
+  `EXECUTION_SCRIPTS_DIR` (`policy.canonicalize_script_path`) — bloquea
+  escapes por `..` y symlinks. La ruta se revalida en cada ejecución.
+- **Sin shell y argv propietario**: `executor.run` construye el `argv` por
+  tipo (`[sys.executable, path]` para `.py`, `[path]` para `.exe` en Windows)
+  y lo ejecuta con `subprocess.run(shell=False)`. No se aceptan argumentos del
+  cliente. `executor.py` es el único módulo del proyecto que importa
+  `subprocess` (verificado por test AST).
+- **Entorno mínimo sin secretos** (`_minimal_env`) y recorte de salida
+  garantizado (`_cap_output` con marcador `[output truncated]`).
+- **Estados persistidos**: la ejecución se deposita como `running` antes de
+  lanzar el proceso y se cierra como `success`/`failed`/`timed_out`,
+  generando auditoría (`EXECUTION_STARTED/SUCCEEDED/FAILED/TIMED_OUT`) en cada
+  transición. Todo síncrono.
+- **Propiedad replay**: `execution_service` replica las reglas de propiedad de
+  `cron_job_service` (404 para ajenos en lectura, 403 en ejecución) para no
+  filtrar ejecuciones entre usuarios.
+- **Permisos nuevos**: `permissions.py` incorpora `EXECUTIONS_EXECUTE`;
+  operator lo recibe (`scripts.read`, `executions.read`, `executions.execute`)
+  y viewer conserva lectura (`scripts.read`, `executions.read`). Escribir
+  scripts sigue siendo solo admin.
 
 ## Decisiones técnicas relevantes (Fases 1-2)
 

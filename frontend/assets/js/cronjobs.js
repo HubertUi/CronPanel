@@ -6,10 +6,11 @@
     "use strict";
 
     let currentUser = null;
+    let scriptsCache = null;
 
     function perms() {
         if (!currentUser) {
-            return { read: false, create: false, update: false, enable: false, del: false };
+            return { read: false, create: false, update: false, enable: false, del: false, execute: false };
         }
         const role = currentUser.role;
         return {
@@ -18,7 +19,23 @@
             update: role === "admin" || role === "operator",
             enable: role === "admin" || role === "operator",
             del: role === "admin",
+            execute: role === "admin" || role === "operator",
         };
+    }
+
+    function loadScripts() {
+        if (scriptsCache) {
+            return Promise.resolve(scriptsCache);
+        }
+        return Api.getScripts()
+            .then(function (scripts) {
+                scriptsCache = scripts || [];
+                return scriptsCache;
+            })
+            .catch(function () {
+                scriptsCache = [];
+                return scriptsCache;
+            });
     }
 
     function showAlert(message) {
@@ -120,6 +137,46 @@
             });
     }
 
+    const executionStatusLabels = {
+        running: "En ejecución",
+        success: "Éxito",
+        failed: "Fallida",
+        timed_out: "Agotó el tiempo",
+    };
+
+    function runExecution(job) {
+        document.getElementById("run-stdout").textContent = "Ejecutando…";
+        document.getElementById("run-stderr").textContent = "";
+        document.getElementById("run-status").textContent = "";
+        document.getElementById("run-modal").classList.remove("hidden");
+
+        Api.executeCronJob(job.id)
+            .then(function (execution) {
+                document.getElementById("run-title").textContent = "Ejecución · " + job.name;
+                const when = execution.finished_at
+                    ? new Date(execution.finished_at).toLocaleString()
+                    : "";
+                const duration = execution.duration_ms != null
+                    ? (execution.duration_ms / 1000).toFixed(2) + " s"
+                    : "—";
+                document.getElementById("run-status").textContent =
+                    (executionStatusLabels[execution.status] || execution.status) +
+                    " · código de salida: " +
+                    (execution.exit_code === null ? "—" : execution.exit_code) +
+                    " · duración: " + duration +
+                    (when ? " · fin: " + when : "");
+                document.getElementById("run-stdout").textContent =
+                    execution.stdout || "(sin salida estándar)";
+                document.getElementById("run-stderr").textContent =
+                    (execution.stderr || "(sin errores)") +
+                    (execution.error ? "\n[error: " + execution.error + "]" : "");
+            })
+            .catch(function (error) {
+                document.getElementById("run-status").textContent =
+                    error.message || "No se pudo ejecutar la tarea.";
+            });
+    }
+
     function renderJobs(jobs) {
         const tbody = document.getElementById("jobs-body");
         tbody.innerHTML = "";
@@ -160,6 +217,12 @@
             cmdCode.className = "cron-command";
             cmdCode.textContent = job.command;
             cmdTd.appendChild(cmdCode);
+            if (job.script_name) {
+                const scriptBadge = document.createElement("div");
+                scriptBadge.className = "script-badge";
+                scriptBadge.textContent = "Script: " + job.script_name;
+                cmdTd.appendChild(scriptBadge);
+            }
             tr.appendChild(cmdTd);
 
             const statusTd = document.createElement("td");
@@ -171,6 +234,24 @@
 
             const actionsTd = document.createElement("td");
             actionsTd.className = "actions-col";
+
+            if (p.execute) {
+                const run = document.createElement("button");
+                run.className = "btn btn-primary btn-small";
+                run.type = "button";
+                run.textContent = "Ejecutar";
+                run.disabled = !job.is_active || !job.script_id;
+                run.title = !job.script_id
+                    ? "La tarea no tiene un script asignado."
+                    : !job.is_active
+                        ? "La tarea está inactiva."
+                        : "Ejecutar ahora";
+                run.addEventListener("click", function () {
+                    clearAlert();
+                    runExecution(job);
+                });
+                actionsTd.appendChild(run);
+            }
 
             if (p.enable) {
                 const toggle = document.createElement("button");
@@ -269,8 +350,47 @@
         document.getElementById("job-schedule").value = job ? job.schedule_expression : "";
         document.getElementById("job-description").value = job ? (job.description || "") : "";
         setScheduleHint("", false);
+        populateScriptSelect(job ? job.script_id : null);
         document.getElementById("job-modal").classList.remove("hidden");
         document.getElementById("job-name").focus();
+    }
+
+    function populateScriptSelect(selectedId) {
+        const select = document.getElementById("job-script");
+        const hint = document.getElementById("job-script-hint");
+        loadScripts().then(function (scripts) {
+            select.innerHTML = "";
+            const none = document.createElement("option");
+            none.value = "";
+            none.textContent = "— Sin script —";
+            select.appendChild(none);
+
+            const enabled = scripts.filter(function (script) {
+                return script.is_enabled;
+            });
+            enabled.forEach(function (script) {
+                const option = document.createElement("option");
+                option.value = String(script.id);
+                option.textContent = script.name;
+                if (String(script.id) === String(selectedId)) {
+                    option.selected = true;
+                }
+                select.appendChild(option);
+            });
+
+            if (selectedId != null && !enabled.some(function (s) { return String(s.id) === String(selectedId); })) {
+                const legacy = document.createElement("option");
+                legacy.value = String(selectedId);
+                legacy.textContent = "(script id " + selectedId + ")";
+                legacy.selected = true;
+                select.appendChild(legacy);
+            }
+
+            hint.textContent =
+                scripts.length === 0
+                    ? "No hay scripts registrados. Los crea un administrador."
+                    : "El motor ejecuta el script permitido vinculado (nunca el comando).";
+        });
     }
 
     function closeJobModal() {
@@ -286,6 +406,10 @@
         const description = document.getElementById("job-description").value.trim();
         if (description) {
             payload.description = description;
+        }
+        const scriptValue = document.getElementById("job-script").value;
+        if (scriptValue !== "") {
+            payload.script_id = Number(scriptValue);
         }
         return payload;
     }
@@ -358,6 +482,12 @@
         });
         document.getElementById("history-done").addEventListener("click", function () {
             document.getElementById("history-modal").classList.add("hidden");
+        });
+        document.getElementById("run-close").addEventListener("click", function () {
+            document.getElementById("run-modal").classList.add("hidden");
+        });
+        document.getElementById("run-done").addEventListener("click", function () {
+            document.getElementById("run-modal").classList.add("hidden");
         });
     }
 

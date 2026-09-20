@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_current_user, require_permissions
 from app.core.permissions import Permission
 from app.database.database import get_db
+from app.execution.policy import ScriptPathError
 from app.models.user import User
 from app.schemas.cron_job import (
     CronJobCreate,
@@ -22,7 +23,8 @@ from app.schemas.cron_job import (
     CronValidateRequest,
     CronValidateResponse,
 )
-from app.services import cron_job_service
+from app.schemas.execution import ExecutionResponse
+from app.services import cron_job_service, execution_service
 from app.utils import cron_validator
 from app.utils.request import get_client_ip
 
@@ -49,6 +51,8 @@ def _to_response(job) -> CronJobResponse:
         human_description=cron_validator.describe_cron_expression(job.schedule_expression),
         is_active=job.is_active,
         owner_id=job.owner_id,
+        script_id=job.script_id,
+        script_name=job.script.name if job.script else None,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
@@ -95,15 +99,19 @@ def create_cron_job(
     current_user: User = Depends(require_permissions(Permission.CRON_JOBS_CREATE)),
     db: Session = Depends(get_db),
 ) -> CronJobResponse:
-    job = cron_job_service.create_cron_job(
-        db,
-        name=body.name,
-        description=body.description,
-        command=body.command,
-        schedule_expression=body.schedule_expression,
-        owner=current_user,
-        ip_address=get_client_ip(request),
-    )
+    try:
+        job = cron_job_service.create_cron_job(
+            db,
+            name=body.name,
+            description=body.description,
+            command=body.command,
+            schedule_expression=body.schedule_expression,
+            owner=current_user,
+            script_id=body.script_id,
+            ip_address=get_client_ip(request),
+        )
+    except cron_job_service.ScriptReferenceNotFoundError:
+        raise _error(400, "SCRIPT_NOT_FOUND", "El script asignado no existe.")
     return _to_response(job)
 
 
@@ -164,12 +172,15 @@ def update_cron_job(
             description=body.description,
             command=body.command,
             schedule_expression=body.schedule_expression,
+            script_id=body.script_id,
             ip_address=get_client_ip(request),
         )
     except cron_job_service.CronJobNotFoundError:
         raise _error(404, "CRON_JOB_NOT_FOUND", "Tarea no encontrada.")
     except cron_job_service.CronJobAccessDeniedError:
         raise _error(403, "CRON_JOB_FORBIDDEN", "No tiene permisos sobre esta tarea.")
+    except cron_job_service.ScriptReferenceNotFoundError:
+        raise _error(400, "SCRIPT_NOT_FOUND", "El script asignado no existe.")
     return _to_response(job)
 
 
@@ -214,6 +225,56 @@ def delete_cron_job(
         raise _error(404, "CRON_JOB_NOT_FOUND", "Tarea no encontrada.")
     except cron_job_service.CronJobAccessDeniedError:
         raise _error(403, "CRON_JOB_FORBIDDEN", "No tiene permisos sobre esta tarea.")
+
+
+@router.post("/{cron_job_id}/execute", response_model=ExecutionResponse)
+def execute_cron_job(
+    cron_job_id: int,
+    request: Request,
+    current_user: User = Depends(require_permissions(Permission.EXECUTIONS_EXECUTE)),
+    db: Session = Depends(get_db),
+) -> ExecutionResponse:
+    try:
+        execution = execution_service.run_cron_job(
+            db,
+            cron_job_id,
+            current_user,
+            ip_address=get_client_ip(request),
+        )
+    except cron_job_service.CronJobNotFoundError:
+        raise _error(404, "CRON_JOB_NOT_FOUND", "Tarea no encontrada.")
+    except cron_job_service.CronJobAccessDeniedError:
+        raise _error(403, "CRON_JOB_FORBIDDEN", "No tiene permisos sobre esta tarea.")
+    except execution_service.JobInactiveError:
+        raise _error(400, "JOB_INACTIVE", "La tarea está desactivada y no se puede ejecutar.")
+    except execution_service.ScriptNotLinkedError:
+        raise _error(400, "SCRIPT_REQUIRED", "La tarea no tiene un script asignado.")
+    except execution_service.ScriptUnavailableError:
+        raise _error(400, "SCRIPT_UNAVAILABLE", "El script asignado no está disponible o está desactivado.")
+    except ScriptPathError as exc:
+        raise _error(400, exc.code, str(exc))
+    return _to_execution_response(execution)
+
+
+def _to_execution_response(execution) -> ExecutionResponse:
+    return ExecutionResponse(
+        id=execution.id,
+        cron_job_id=execution.cron_job_id,
+        cron_job_name=execution.cron_job.name if execution.cron_job else None,
+        script_id=execution.script_id,
+        script_name=execution.script.name if execution.script else None,
+        trigger=execution.trigger,
+        status=execution.status,
+        exit_code=execution.exit_code,
+        stdout=execution.stdout,
+        stderr=execution.stderr,
+        error=execution.error,
+        duration_ms=execution.duration_ms,
+        username=execution.username,
+        ip_address=execution.ip_address,
+        started_at=execution.started_at,
+        finished_at=execution.finished_at,
+    )
 
 
 @router.post("/validate", response_model=CronValidateResponse)

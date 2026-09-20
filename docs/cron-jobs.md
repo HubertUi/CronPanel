@@ -1,33 +1,38 @@
-# Módulo de tareas cron (Automatizaciones) — Fase 3
+# Módulo de tareas cron (Automatizaciones) — Fases 3-4
 
-> Documento del submódulo implementado en la Fase 3. Complementa
-> `architecture.md`, `security.md` y `api.md`.
+> Documento del submódulo de automatizaciones. Complementa
+> `architecture.md`, `security.md`, `api.md` y `execution.md`.
 
 ## Qué hace y qué NO hace
 
-CronPanel **Fase 3** gestiona datos de programación de tareas:
+CronPanel gestiona datos de programación de tareas:
 creación, lectura, edición, pausa/activación y borrado de automatizaciones, con
 validación de expresiones cron, historial por tarea y auditoría global.
 
-**No ejecuta, no modifica, no instala nada:**
+**Sobre el `command`: sigue sin ejecutarse.**
 
 - No se ejecuta el `command` almacenado (ni siquiera de forma "seca").
 - No se invoca `crontab`, no se escribe en `/etc/crontab`, `/etc/cron.d`,
   `/var/spool/cron` ni en ninguna parte del sistema.
-- No se abren subprocesos ni shells desde los módulos de tareas.
-- El campo `command` es un **dato** que acompañará a la tarea cuando la
-  ejecución segura se implemente en una fase posterior.
+- El campo `command` es un **dato informativo**.
 
-Esto se garantiza con un test estático que inspecciona el AST de los módulos de
-tareas en busca de primitivas de ejecución (`subprocess`, `os.system`,
-`os.popen`, `shell=True`, `eval`, `exec`) y rutas del crontab del sistema.
+**Qué sí se ejecuta (Fase 4)**: si la tarea enlaza un script registrado
+(`script_id`), `POST /api/cron-jobs/{id}/execute` lanza **ese script** con el
+runner seguro (ver `execution.md`), usando solo la ruta registrada y sin
+argumentos del cliente. Todo ello se garantiza con un test estático (AST) que
+inspecciona los módulos de tareas y de ejecución en busca de primitivas de
+ejecución prohibidas y rutas del crontab del sistema, y con un spy de runtime
+que vigila que `crontab` jamás se invoque.
 
 ## Modelo de datos
 
 | Tabla | Propósito |
 |---|---|
-| `cron_jobs` | Tarea: `name`, `description`, `command`, `schedule_expression`, cinco campos derivados (`minute`, `hour`, `day_of_month`, `month`, `day_of_week`), `is_active`, `is_deleted`, `owner_id → users.id` |
+| `cron_jobs` | Tarea: `name`, `description`, `command`, `script_id → scripts.id` (opcional, Fase 4), `schedule_expression`, cinco campos derivados (`minute`, `hour`, `day_of_month`, `month`, `day_of_week`), `is_active`, `is_deleted`, `owner_id → users.id` |
 | `cron_job_history` | Registro de cambios por tarea: `username`, `action`, `changes` (JSON diff), `timestamp` |
+
+Enlazar el `script_id` en un PUT con `null` desenlaza la tarea. Un `script_id`
+a un script borrado o inexistente se rechaza (`400 SCRIPT_NOT_FOUND`).
 
 ### Estrategia de la programación (decisión C)
 
@@ -57,6 +62,7 @@ serializar la respuesta.
 | `cron_jobs.update` | ✔ | ✔ | — |
 | `cron_jobs.enable` | ✔ | ✔ | — |
 | `cron_jobs.delete` | ✔ | — | — |
+| `executions.execute` | ✔ | ✔ | — |
 
 - **Propiedad**: un no-admin solo listea/lee/edita sus propias tareas.
   - GET/historial de tarea ajena → `404 CRON_JOB_NOT_FOUND` (no revela
@@ -94,28 +100,43 @@ Resumen de rutas (detalle y ejemplos en `api.md`):
 
 ```text
 GET    /api/cron-jobs                    listar (filtros, solo propias)
-POST   /api/cron-jobs                    crear
+POST   /api/cron-jobs                    crear (opcional script_id)
 GET    /api/cron-jobs/{id}               obtener
 GET    /api/cron-jobs/{id}/history       historial de cambios
-PUT    /api/cron-jobs/{id}               actualizar (parcial)
+PUT    /api/cron-jobs/{id}               actualizar (parcial, incl. script_id)
 PATCH  /api/cron-jobs/{id}/status        pausar/activar
 DELETE /api/cron-jobs/{id}               borrado suave (solo admin)
+POST   /api/cron-jobs/{id}/execute       ejecución manual del script enlazado (Fase 4)
 POST   /api/cron-jobs/validate           validar expresión cron
 ```
+
+La **ejecución manual** solo está disponible para tareas **activas** y con
+**script enlazado**: requiere `executions.execute`, la tarea debe ser propia
+(no-admin) y el script habilitado y vigente. Respuesta `200` con la ejecución
+completa; los errores y el detalle del runner están documentados en
+`api.md` y `execution.md`. Las ejecuciones se consultan en el submódulo de
+ejecuciones (`/api/executions`).
 
 ## Frontend
 
 `frontend/pages/cron-jobs.html` + `assets/js/cronjobs.js`:
 
-- Tabla con nombre, expresión, descripción legible, comando, estado y acciones.
+- Tabla con nombre, expresión, descripción legible, comando, **script enlazado
+  (badge)**, estado y acciones.
 - Filtros por nombre y estado (solo la propia vista del usuario).
 - Crear/editar en modal con **validación en vivo** de la expresión
-  (`POST /validate` con debounce) y pista de la descripción legible.
+  (`POST /validate` con debounce), pista de la descripción legible y
+  **selector de script** (solo scripts habilitados; conserva la opción legada
+  si la tarea apuntaba a un script deshabilitado/borrado).
+- **Botón Ejecutar** (rol operator/admin, tarea activa y con script) que abre
+  un modal con el resultado en vivo: `stdout`, `stderr`, `exit_code`,
+  duración y estado de la ejecución.
 - Botones condicionados por rol (ocultos si el permiso no existe: noadmin
-  no ve "Eliminar"; viewer no ve crear/editar/pausar).
+  no ve "Eliminar"; viewer no ve crear/editar/pausar/ejecutar).
 - Historial en modal con diff por campo; aviso en el diálogo de borrado de que
   el historial se conserva.
-- Aviso explícito en el formulario: "Se almacena como dato; nunca se ejecuta".
+- Aviso explícito en el formulario: "El comando se almacena como dato; la
+  ejecución usa solo el script seleccionado".
 - Toda la capa HTTP pasa por `assets/js/api.js` (función `request` única que
   adjunta el JWT y normaliza errores).
 
@@ -125,7 +146,7 @@ POST   /api/cron-jobs/validate           validar expresión cron
   de error), casos válidos, normalización y descripciones.
 - `tests/test_cron_jobs.py`: CRUD completo, propiedad (404/403),
   RBAC por rol, contenido y persistencia del historial, auditoría (incluyendo
-  la ausencia del comando en `audit_logs`) y el escaneo estático de
-  no-ejecución.
+  la ausencia del comando en `audit_logs`), escaneo estático de no-ejecución
+  del `command`, enlace de `script_id` y ejecución manual (ver `execution.md`).
 - El smoke test local (`backend/smoke_test.py`, **gitignored**) recorre un
   flujo completo contra la BD de desarrollo.

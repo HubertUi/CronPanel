@@ -20,6 +20,7 @@ from app.models.cron_job import CronJob
 from app.models.cron_job_history import CronJobHistory
 from app.models.user import User
 from app.repositories.cron_job_repository import CronJobHistoryRepository, CronJobRepository
+from app.repositories.execution_repository import ScriptRepository
 from app.services import audit_service
 from app.utils.cron_validator import parse_cron_expression
 
@@ -29,6 +30,10 @@ class CronJobNotFoundError(Exception):
 
 
 class CronJobAccessDeniedError(Exception):
+    pass
+
+
+class ScriptReferenceNotFoundError(Exception):
     pass
 
 
@@ -105,6 +110,15 @@ def _get_job_for_write(session: Session, job_id: int, actor: User) -> CronJob:
     return job
 
 
+def _validate_script_reference(session: Session, script_id: int | None) -> None:
+    """A job may point only to an existing, non-deleted script."""
+    if script_id is None:
+        return
+    script = ScriptRepository(session).get_by_id(script_id)
+    if script is None:
+        raise ScriptReferenceNotFoundError
+
+
 def create_cron_job(
     session: Session,
     *,
@@ -113,14 +127,17 @@ def create_cron_job(
     command: str,
     schedule_expression: str,
     owner: User,
+    script_id: int | None = None,
     ip_address: str | None = None,
 ) -> CronJob:
+    _validate_script_reference(session, script_id)
     job = CronJob(
         name=name,
         description=description,
         command=command,
         is_active=True,
         owner_id=owner.id,
+        script_id=script_id,
     )
     _apply_schedule(job, schedule_expression)
     CronJobRepository(session).add(job, commit=False)
@@ -177,9 +194,12 @@ def update_cron_job(
     description: str | None = None,
     command: str | None = None,
     schedule_expression: str | None = None,
+    script_id: int | None = None,
     ip_address: str | None = None,
 ) -> CronJob:
     job = _get_job_for_write(session, job_id, actor)
+    if script_id is not None:
+        _validate_script_reference(session, script_id)
 
     changes: dict[str, dict] = {}
     candidates = [
@@ -191,6 +211,10 @@ def update_cron_job(
         if new_value is not None and new_value != old_value:
             changes[field] = {"from": old_value, "to": new_value}
             setattr(job, field, new_value)
+
+    if script_id is not None and script_id != job.script_id:
+        changes["script_id"] = {"from": job.script_id, "to": script_id}
+        job.script_id = script_id
 
     if schedule_expression is not None and schedule_expression != job.schedule_expression:
         old_expression = job.schedule_expression

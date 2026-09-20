@@ -1,6 +1,6 @@
 # Seguridad — CronPanel
 
-> Medidas implementadas hasta la Fase 3 y controles planificados.
+> Medidas implementadas hasta la Fase 4 y controles planificados.
 > Prioridad del proyecto: SEGURIDAD > ARQUITECTURA > MANTENIBILIDAD >
 > FUNCIONALIDAD > INTERFAZ.
 
@@ -76,21 +76,35 @@ Acciones registradas:
 | `CRON_JOB_ENABLED` | Activación de tarea cron |
 | `CRON_JOB_DISABLED` | Desactivación de tarea cron |
 | `CRON_JOB_DELETED` | Borrado (suave) de tarea cron |
+| `SCRIPT_CREATED` | Registro de script en la allow-list |
+| `SCRIPT_UPDATED` | Actualización de script (incl. ruta) |
+| `SCRIPT_ENABLED` / `SCRIPT_DISABLED` | Activación/desactivación de script |
+| `SCRIPT_DELETED` | Borrado (suave) de script |
+| `EXECUTION_STARTED` | Inicio de ejecución (persistida como `running`) |
+| `EXECUTION_SUCCEEDED` | Ejecución completada con éxito |
+| `EXECUTION_FAILED` | Ejecución finalizada con error (exit != 0) |
+| `EXECUTION_TIMED_OUT` | Ejecución cancelada por timeout |
 
 **Regla de seguridad**: los detalles de auditoría nunca contienen contraseñas,
 tokens ni secretos. La función `sanitize_details()` filtra claves sensibles
 como defense in depth. Además, **las entradas de auditoría de tareas cron
 nunca incluyen el comando** (`command`), por diseño y con test dedicado
-(la difusión del comando en la vista global de auditoría no es deseable).
+(la difusión del comando en la vista global de auditoría no es deseable). Las
+entradas de `SCRIPT_*` no registran la ruta del script; las de `EXECUTION_*`
+no incluyen el contenido de `stdout`/`stderr`.
 
 ### Tareas cron (Fase 3)
 
-- **No ejecución absoluta**: el módulo es de datos de programación. Prohibidos
-  por diseño y verificados por un test estático (AST sobre los módulos de
-  tareas): `subprocess`, `os.system`, `os.popen`, `shell=True`, `eval/exec`,
+- **El `command` libre nunca se ejecuta** (sigue siendo cierto en Fase 4): el
+  módulo de tareas es de datos de programación. Prohibidos por diseño y
+  verificados por un test estático (AST sobre los módulos de tareas):
+  `subprocess`, `os.system`, `os.popen`, `shell=True`, `eval/exec`,
   y cualquier escritura en el crontab del sistema (`/etc/crontab`,
   `/var/spool/cron`). El frontend informa explícitamente de que el comando se
   almacena como dato y nunca se ejecuta.
+- En Fase 4 la única ejecución posible es la de un **script de la allow-list**
+  enlazado a la tarea (ver [Ejecución segura](#ejecucin-segura-fase-4)); el
+  `command` de la tarea se ignora por completo en la ejecución.
 - **Autorización por rol + propiedad**:
   - `require_permissions(cron_jobs.*)`: leer/crear/editar/activar/eliminar.
   - El servicio valida la **propiedad** (o `is_full_access_role()` para admin).
@@ -130,8 +144,9 @@ nunca incluyen el comando** (`command`), por diseño y con test dedicado
 - Mapeo centralizado rol → permisos en `core/permissions.py`. Prohibido
   comprobar `user.role == "admin"` en el código de negocio.
 - Fábrica de dependencias `require_permissions(...)` protege endpoints.
-- Roles semilla: `admin` (todos), `operator` (tareas + lectura scripts/
-  ejecuciones), `viewer` (solo lectura tareas/ejecuciones).
+- Roles semilla: `admin` (todos), `operator` (tareas + ejecución y lectura de
+  scripts/ejecuciones), `viewer` (solo lectura tareas/scripts/ejecuciones).
+- Escribir scripts (**registrar/actualizar/eliminar**) es solo `admin`.
 
 ### Transporte y cabeceras
 
@@ -164,14 +179,48 @@ Cabeceras añadidas a todas las respuestas:
 - Migración 0001: `roles` + `users` (esquema inicial).
 - Migración 0002: `audit_logs` + `revoked_tokens` + `users.tokens_invalid_before`.
 - Migración 0003: `cron_jobs` + `cron_job_history`.
+- Migración 0004: `scripts` + `executions` + `cron_jobs.script_id`
+  (con `batch_alter_table` y la FK explícita `fk_cron_jobs_script_id_scripts`
+  porque SQLite no puede ALTER constraints in situ).
 - En desarrollo, las tablas se crean automáticamente con `create_all()`.
 
 ### Logs
 
 - Separados por namespace: aplicación (`cronpanel.app`), ejecuciones
-  (`cronpanel.execution`, reservado) y auditoría (`cronpanel.audit`).
+  (`cronpanel.execution`) y auditoría (`cronpanel.audit`).
 - Rotación por tamaño (5 MB × 3). No se registran contraseñas ni tokens.
 - Los intentos fallidos de login se registran sin incluir la contraseña.
+
+### Ejecución segura (Fase 4)
+
+El runner (`app/execution/`) solo ejecuta scripts registrados por admin:
+
+1. **Allow-list con anclaje a directorio**: al registrar y al actualizar el
+   script, la ruta se canoniza con `Path.resolve(strict=True)` y debe quedar
+   dentro de `EXECUTION_SCRIPTS_DIR` (default `backend/scripts_allowlist/`);
+   los escapes por `..` y por **symlinks** se rechazan
+   (`SCRIPT_PATH_OUTSIDE_ALLOWLIST`). La ruta se revalida también en el
+   momento de ejecutar.
+2. **Sin shell y sin comandos del cliente**: `subprocess.run(argv, shell=False)`
+   con `argv` construido por tipo (`.py` → `[sys.executable, path]`, `.exe` →
+   `[path]`). El runner es el **único** módulo que importa `subprocess` y no se
+   aceptan argumentos: la ejecución no puede inyectar comandos.
+3. **Entorno mínimo**: el proceso se lanza con un entorno reducido sin las
+   variables secretas de la aplicación (`SECRET_KEY`, `ADMIN_*`, credenciales
+   de BD).
+4. **Timeout y recorte**: `EXECUTION_TIMEOUT_SECONDS` (1–300) mata el proceso
+   (`timed_out`); `stdout`/`stderr` se recortan a `EXECUTION_OUTPUT_MAX_CHARS`
+   con marcador `[output truncated]`, evitando abusos de memoria/discord.
+5. **Estados y auditoría**: cada ejecución se persiste (depositando
+   `running` desde el inicio) y cierra con `success`/`failed`/`timed_out`,
+   generando auditoría (`EXECUTION_STARTED/SUCCEEDED/FAILED/TIMED_OUT`). El
+   detalle técnico (salidas completas) vive en la tabla `executions`, que es
+   **propiedad-scoped**; la auditoría global nunca incluye la salida.
+6. **Propiedad**: un no-admin solo ejecuta/lee ejecuciones de sus tareas
+   propias; consultas ajenas → `404` (anti-enumeración).
+7. **Contrato garantizado por tests**: AST estático (único importador de
+   `subprocess`, sin `shell=True`/`os.system`/`os.popen`/`eval`/`exec`/rutas
+   de crontab) + spy de runtime que vigila que `crontab` jamás se invoque.
 
 ## Limitaciones conocidas (aceptadas)
 
@@ -183,12 +232,11 @@ Cabeceras añadidas a todas las respuestas:
 ## Plan de hardening (fases futuras)
 
 - Ejecución de scripts con usuario Linux dedicado y least privilege.
-- Validación de comandos/rutas contra path traversal e inyección (cuando se
-  implemente la ejecución real).
+- Sandboxing adicional (seccomp, contenedores) para el runner.
 - HTTPS terminado en nginx + cabeceras CSP.
 - Migración a PostgreSQL y backups programados.
 - Gestor de crontab real (lectura/instalación controlada) con dry-run y
-  confirmación explícita en la Fase 6 del roadmap.
+  confirmación explícita en una fase futura del roadmap.
 
 ## Reporte de vulnerabilidades
 

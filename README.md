@@ -4,7 +4,7 @@ Panel web para la administración, automatización, monitoreo y auditoría de ta
 programadas mediante `cron`/`crontab` en sistemas Linux, con orientación
 profesional a ciberseguridad.
 
-> **Estado actual: Fase 3 completada** (tareas cron/crontab).
+> **Estado actual: Fase 4 completada** (scripts allow-list + ejecución segura).
 > Este documento refleja **únicamente** lo implementado hasta la fecha.
 > Las funcionalidades pendientes se listan en el apartado [Roadmap](#roadmap).
 
@@ -44,8 +44,19 @@ acciones y administración de usuarios con roles y permisos.
 - Frontend oscuro estilo administrativo/SOC: login funcional contra la API y
   dashboard inicial con estado del sistema.
 - **Página "Automatizaciones"**: listado con filtros, creación/edición con
-  validación en vivo de la expresión cron, pausar/activar, historial y borrado.
-- Suite de pruebas automatizadas (132 tests).
+  validación en vivo de la expresión cron, pausar/activar, historial, borrado y
+  **enlace opcional a un script** (+ botón Ejecutar).
+- **Módulo de scripts (allow-list)**: el admin registra scripts que deben
+  residir en `backend/scripts_allowlist/` (o `EXECUTION_SCRIPTS_DIR`); la ruta
+  se canónica al registrar/actualizar. Página `scripts.html` con CRUD.
+- **Motor de ejecución segura**: ejecución manual y síncrona solo del script
+  enlazado, vía `subprocess.run(shell=False)` con entorno mínimo sin secretos,
+  timeout y recorte de salida configurables, estados `success`/`failed`/
+  `timed_out` y auditoría `EXECUTION_*`.
+- **Historial de ejecuciones**: `executions.html` con filtros por estado y
+  modal de salida; alcance por propiedad (nunca se filtran ejecuciones ajenas).
+  El `command` libre de la tarea **nunca** se ejecuta.
+- Suite de pruebas automatizadas (162 tests).
 
 ## Tecnologías
 
@@ -66,31 +77,32 @@ CronPanel/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py              # Aplicación FastAPI
-│   │   ├── core/                # config, security, permissions, logging, audit_actions, cron_history_actions, password_policy, rate_limit
+│   │   ├── core/                # config, security, permissions, logging, audit_actions, execution_status, cron_history_actions, password_policy, rate_limit
 │   │   ├── database/            # engine, sesión, init_db (tablas + seeds)
-│   │   ├── models/              # ORM: user, role, audit_log, revoked_token, cron_job, cron_job_history
-│   │   ├── schemas/             # Pydantic: auth, user, cron_job
+│   │   ├── models/              # ORM: user, role, audit_log, revoked_token, cron_job, cron_job_history, script, execution
+│   │   ├── schemas/             # Pydantic: auth, user, cron_job, script, execution
 │   │   ├── api/
 │   │   │   ├── dependencies.py  # get_current_user, require_permissions()
-│   │   │   └── routes/          # auth.py, health.py, users.py, cron_jobs.py
-│   │   ├── services/            # auth_service, user_service, audit_service, cron_job_service
-│   │   ├── repositories/        # user_repository, role_repository, audit_repository, revoked_token_repository, cron_job_repository
+│   │   │   └── routes/          # auth.py, health.py, users.py, cron_jobs.py, scripts.py, executions.py
+│   │   ├── services/            # auth_service, user_service, audit_service, cron_job_service, script_service, execution_service
+│   │   ├── repositories/        # user_repository, role_repository, audit_repository, revoked_token_repository, cron_job_repository, script_repository, execution_repository
 │   │   ├── utils/               # datetime helpers, request helpers, cron_validator
-│   │   ├── cron/                # (reservado: gestor de crontab)
-│   │   └── execution/           # (reservado: runner seguro)
+│   │   ├── execution/           # runner seguro: policy.py (allow-list) + executor.py
+│   │   └── cron/                # (reservado: gestor de crontab)
 │   ├── alembic/                 # Migraciones de esquema
 │   │   ├── env.py
 │   │   ├── script.py.mako
-│   │   └── versions/            # 0001_initial_schema, 0002_phase2_security, 0003_cron_jobs
+│   │   └── versions/            # 0001_initial_schema, 0002_phase2_security, 0003_cron_jobs, 0004_executions
 │   ├── alembic.ini
-│   ├── tests/                   # pytest: 132 tests
+│   ├── tests/                   # pytest: 162 tests
+│   ├── scripts_allowlist/       # directorio por defecto de la allow-list (hello.py, boom.py, sleep.py)
 │   ├── requirements.txt
 │   └── .env.example
 ├── frontend/
 │   ├── index.html               # Redirección según sesión
-│   ├── pages/                   # login.html, dashboard.html, cron-jobs.html
+│   ├── pages/                   # login, dashboard, cron-jobs, scripts, executions
 │   └── assets/                  # css/ y js/ modulares
-├── docs/                        # architecture, security, installation, api, development
+├── docs/                        # architecture, security, installation, api, development, cron-jobs, execution
 ├── .gitignore
 ├── LICENSE
 └── README.md
@@ -160,19 +172,40 @@ python -m pytest -v
 
 Cobertura actual: autenticación, seguridad (hashing/JWT), permisos RBAC,
 health check, manejo de errores estructurados, validador de expresiones cron,
-CRUD de tareas, propiedad/permisos, historial, auditoría y no-ejecución.
+CRUD de tareas, propiedad/permisos, historial, auditoría, no-ejecución del
+`command`, registro/evaluación de scripts, ejecución segura (timeout/recorte/
+argv) y no-uso del crontab.
 
 ## Roles actuales
 
 | Rol | Permisos resumidos |
 |---|---|
 | `admin` | Todos los permisos definidos + acceso total a todas las tareas |
-| `operator` | Tareas: leer, crear, editar, pausar/activar (no eliminar) |
-| `viewer` | Solo lectura de tareas (propias) |
+| `operator` | Tareas: leer, crear, editar, pausar/activar (no eliminar) + **ejecutar** y leer scripts/ejecuciones |
+| `viewer` | Solo lectura de tareas, scripts y ejecuciones (propias) |
 
 La propiedad de las tareas se aplica a nivel de servicio: un `operator` o
 `viewer` solo ve y administra sus propias tareas; solo `admin` (acceso total)
-puede administrar tareas de otros usuarios. Eliminar requiere ser `admin`.
+puede administrar tareas de otros usuarios. Eliminar tareas y **escribir
+scripts** (registrar/actualizar/borrar) requiere ser `admin`.
+
+## Motor de ejecución (Fase 4)
+
+- Solo se ejecutan **scripts registrados por admin** que existan dentro de la
+  allow-list (`EXECUTION_SCRIPTS_DIR`, default `backend/scripts_allowlist/`);
+  la ruta se canoniza (`Path.resolve`) y se bloquean escapes por `..`/symlinks
+  (`SCRIPT_PATH_OUTSIDE_ALLOWLIST`). Se revalida en cada ejecución.
+- `subprocess.run(argv, shell=False)`; `argv` se construye por tipo (`.py` →
+  `[python, path]`, `.exe` → `[path]`); sin argumentos del cliente ni del
+  `command` de la tarea. Entorno mínimo sin secretos, timeout (1–300 s) y
+  salida recortada con marcador.
+- El runner (`app/execution/`) es el **único** importador de `subprocess`
+  (test estático AST) y el crontab del sistema nunca se toca (spy de runtime).
+- Cada ejecución se persiste (`executions`) y audita
+  (`EXECUTION_STARTED/SUCCEEDED/FAILED/TIMED_OUT`); solo manual y síncrona por
+  ahora (sin planificador).
+
+Detalle completo en [`docs/execution.md`](docs/execution.md).
 
 ## Seguridad implementada
 
@@ -186,16 +219,21 @@ puede administrar tareas de otros usuarios. Eliminar requiere ser `admin`.
 - Mensajes de login genéricos (anti-enumeración de usuarios) y equalizador de tiempo.
 - Cabeceras HTTP de seguridad y CORS restringido por configuración.
 - Errores centralizados: detalle técnico solo en logs, mensaje seguro al cliente.
-- **Registro de auditoría**: login, logout, cambio contraseña, CRUD usuarios y
-  CRUD de tareas cron (en este último nunca se registra el comando).
+- **Registro de auditoría**: login, logout, cambio contraseña, CRUD usuarios,
+  CRUD tareas cron, scripts (`SCRIPT_*`) y ejecuciones (`EXECUTION_*`).
+  En tareas cron nunca se registra el comando; en scripts no se registra la
+  ruta; en ejecuciones no se registra la salida.
 - **Protección del último admin**: eliminación, desactivación y degradación bloqueadas.
-- **Tareas cron como datos, no como ejecución**: CronPanel nunca ejecuta
-  comandos ni modifica el sistema crontab en esta fase; `command` es un dato.
-  Garantizado por test estático (AST) que impide `subprocess`, `os.system`,
-  `shell=True`, etc. en los módulos de tareas.
+- **Tareas cron como datos, no como ejecución**: el `command` libre nunca se
+  ejecuta ni modifica el sistema crontab en ninguna fase. **Ejecución segura
+  solo de scripts allow-list**: `subprocess.run(shell=False)` con entorno
+  mínimo, timeout, recorte de salida, ruta canonizada dentro de la allow-list
+  y revalidación en ejecución. Garantizado por test estático (AST) que impide
+  `subprocess` fuera de `app/execution/`, `os.system`, `shell=True`, etc., y
+  por spy de runtime que vigila que `crontab` jamás se invoque.
 - **Alembic** para migraciones de esquema controladas.
 
-Detalle completo en [`docs/security.md`](docs/security.md).
+Detalle completo en [`docs/security.md`](docs/security.md) y [`docs/execution.md`](docs/execution.md).
 
 ## Roadmap
 
@@ -205,17 +243,16 @@ Fases pendientes sobre esta base (en orden acordado):
 2. ~~Logout server-side, auditoría, rate limiting, política de contraseñas, cambio contraseña, CRUD usuarios, Alembic~~ ✔ Fase 2
 3. ~~Modelo de tareas cron (CRUD de automatizaciones) + RBAC en endpoints +
    validador de expresiones cron + historial por tarea~~ ✔ Fase 3
-4. Constructor visual de expresiones cron (refinamiento del validador)
-5. Gestor de crontab (lectura/instalación controlada, importación)
-6. Módulo de scripts
-7. Ejecución segura (runner con timeout, stdout/stderr, exit code)
-8. Historial de ejecuciones
-9. Dashboard con métricas reales
-10. Auditoría de acciones (página)
-11. Administración de usuarios/roles (páginas frontend)
-12. Hardening de seguridad
-13. Ampliación de testing
-14. Documentación final y scripts de instalación Linux
+4. ~~Módulo de scripts (allow-list) + ejecución segura + historial de ejecuciones~~ ✔ Fase 4
+5. Constructor visual de expresiones cron (refinamiento del validador)
+6. Gestor de crontab (lectura/instalación controlada, importación)
+7. Planificador del motor de ejecución (hoy solo ejecución manual)
+8. Dashboard con métricas reales
+9. Auditoría de acciones (página)
+10. Administración de usuarios/roles (páginas frontend)
+11. Hardening de seguridad
+12. Ampliación de testing
+13. Documentación final y scripts de instalación Linux
 
 ## Documentación
 
@@ -224,6 +261,7 @@ Fases pendientes sobre esta base (en orden acordado):
 - [`docs/installation.md`](docs/installation.md) — instalación paso a paso
 - [`docs/api.md`](docs/api.md) — referencia de la API actual
 - [`docs/cron-jobs.md`](docs/cron-jobs.md) — módulo de tareas cron/crontab
+- [`docs/execution.md`](docs/execution.md) — motor de ejecución segura (Fase 4)
 - [`docs/development.md`](docs/development.md) — guía para desarrolladores
 
 ## Licencia

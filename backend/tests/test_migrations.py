@@ -41,6 +41,8 @@ def test_upgrade_creates_all_expected_tables(migration_database):
         "revoked_tokens",
         "cron_jobs",
         "cron_job_history",
+        "scripts",
+        "executions",
     }
     assert expected.issubset(set(table_names))
 
@@ -51,7 +53,12 @@ def test_downgrade_removes_phase2_tables(migration_database):
 
     cfg = _make_config(migration_database)
     command.upgrade(cfg, "head")
-    command.downgrade(cfg, "-2")
+
+    table_names = set(inspect(create_engine(migration_database)).get_table_names())
+    assert "scripts" in table_names
+    assert "executions" in table_names
+
+    command.downgrade(cfg, "-3")
 
     engine = create_engine(migration_database)
     table_names = set(inspect(engine).get_table_names())
@@ -59,5 +66,7 @@ def test_downgrade_removes_phase2_tables(migration_database):
     assert "revoked_tokens" not in table_names
     assert "cron_jobs" not in table_names
     assert "cron_job_history" not in table_names
+    assert "scripts" not in table_names
+    assert "executions" not in table_names
     assert "roles" in table_names
     assert "users" in table_names

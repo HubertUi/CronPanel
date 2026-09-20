@@ -1,6 +1,6 @@
 # Instalación — CronPanel
 
-> Guía verificada en la Fase 2. Entorno de desarrollo probado:
+> Guía verificada en la Fase 4. Entorno de desarrollo probado:
 > Windows 11 + Python 3.14. Objetivo de despliegue: Ubuntu Server.
 
 ## Requisitos
@@ -62,6 +62,9 @@ Variables principales del `.env`:
 | `LOGIN_RATE_LIMIT` | Max intentos fallidos de login en la ventana | `5` |
 | `LOGIN_RATE_WINDOW_SECONDS` | Ventana de rate limiting en segundos | `300` |
 | `CORS_ORIGINS` | Orígenes permitidos separados por comas | `http://localhost:8000` |
+| `EXECUTION_TIMEOUT_SECONDS` | Timeout por ejecución de script (1–300) | `60` |
+| `EXECUTION_OUTPUT_MAX_CHARS` | Recorte de `stdout`/`stderr` por ejecución (1024–1M) | `1024` |
+| `EXECUTION_SCRIPTS_DIR` | Directorio raíz de la allow-list (vacío → `backend/scripts_allowlist/`) | *(vacío)* |
 
 ### 5. Inicializar base de datos y usuario administrador
 
@@ -89,14 +92,21 @@ Si es la primera vez con Alembic y ya tienes datos en la DB:
 # Marcar las tablas existentes como migración 0001:
 python -m alembic stamp 0001
 
-# Aplicar migraciones pendientes (añade audit_logs, revoked_tokens, etc.):
+# Aplicar migraciones pendientes (añade audit_logs, revoked_tokens,
+# cron_jobs/cron_job_history y scripts/executions):
 python -m alembic upgrade head
 ```
 
 Para nuevas instalaciones, `init_db` crea las tablas automáticamente y puedes
 hacer `python -m alembic stamp head` después.
 
-### 7. Arrancar el servidor
+### 7. Directorio de scripts (allow-list)
+
+Las ejecuciones solo pueden lanzar scripts dentro del directorio permitido.
+Por defecto es `backend/scripts_allowlist/` (creado al arrancar si no existe).
+Para cambiar la raíz, definir `EXECUTION_SCRIPTS_DIR` en `.env`.
+
+### 8. Arrancar el servidor
 
 ```bash
 uvicorn app.main:app --reload --port 8000
@@ -108,7 +118,7 @@ uvicorn app.main:app --reload --port 8000
 | `http://localhost:8000/api/health` | Health check JSON |
 | `http://localhost:8000/api/docs` | Swagger UI (solo `DEBUG=true`) |
 
-### 8. Verificar instalación
+### 9. Verificar instalación
 
 1. Abrir `http://localhost:8000/pages/login.html`.
 2. Iniciar sesión con el usuario administrador creado.

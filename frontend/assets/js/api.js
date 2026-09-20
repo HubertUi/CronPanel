@@ -121,4 +121,46 @@ const Api = {
     validateCronExpression(scheduleExpression) {
         return this.post("/api/cron-jobs/validate", { schedule_expression: scheduleExpression });
     },
+
+    executeCronJob(id) {
+        return this.post("/api/cron-jobs/" + id + "/execute", {});
+    },
+
+    /* ---- Scripts (allow-list) ---- */
+    getScripts() {
+        return this.get("/api/scripts");
+    },
+
+    getScript(id) {
+        return this.get("/api/scripts/" + id);
+    },
+
+    createScript(body) {
+        return this.post("/api/scripts", body);
+    },
+
+    updateScript(id, body) {
+        return this.put("/api/scripts/" + id, body);
+    },
+
+    deleteScript(id) {
+        return this.delete("/api/scripts/" + id);
+    },
+
+    /* ---- Executions ---- */
+    getExecutions(filter) {
+        const params = new URLSearchParams();
+        if (filter) {
+            if (filter.jobId) params.set("job_id", filter.jobId);
+            if (filter.status) params.set("status", filter.status);
+            if (filter.limit) params.set("limit", filter.limit);
+            if (filter.offset) params.set("offset", filter.offset);
+        }
+        const qs = params.toString();
+        return this.get("/api/executions" + (qs ? "?" + qs : ""));
+    },
+
+    getExecution(id) {
+        return this.get("/api/executions/" + id);
+    },
 };

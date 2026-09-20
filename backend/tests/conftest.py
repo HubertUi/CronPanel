@@ -19,6 +19,8 @@ os.environ.setdefault("ACCESS_TOKEN_EXPIRE_MINUTES", "60")
 os.environ.setdefault("BCRYPT_ROUNDS", "4")
 os.environ.setdefault("PASSWORD_MIN_LENGTH", "8")
 os.environ["DATABASE_URL"] = f"sqlite:///{(_TEST_DIR / 'test_cronpanel.db').as_posix()}"
+os.environ["EXECUTION_SCRIPTS_DIR"] = str(_TEST_DIR / "allowlist")
+Path(os.environ["EXECUTION_SCRIPTS_DIR"]).mkdir(parents=True, exist_ok=True)
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -156,3 +158,18 @@ def operator_headers(client, seeded_db, operator_account) -> dict:
 @pytest.fixture()
 def viewer_headers(client, seeded_db, viewer_account) -> dict:
     return _make_headers(client, viewer_account["username"], viewer_account["password"])
+
+
+@pytest.fixture()
+def isolated_allowlist(tmp_path, monkeypatch):
+    """An empty allow-list dir isolated per test, wired into settings.
+
+    Tests write their script files here and register those paths; nothing
+    leaks between tests and the global allow-list stays untouched.
+    """
+    root = tmp_path / "allowlist"
+    root.mkdir(parents=True)
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "EXECUTION_SCRIPTS_DIR", str(root))
+    return root

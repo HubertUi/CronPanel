@@ -40,6 +40,7 @@ class Permission:
 
     # Executions
     EXECUTIONS_READ = "executions.read"
+    EXECUTIONS_EXECUTE = "executions.execute"
 
     # Audit
     AUDIT_READ = "audit.read"
@@ -74,6 +75,7 @@ _OPERATOR_PERMISSIONS = frozenset(
         Permission.TASKS_EXECUTE,
         Permission.SCRIPTS_READ,
         Permission.EXECUTIONS_READ,
+        Permission.EXECUTIONS_EXECUTE,
     }
 )
 
@@ -81,6 +83,7 @@ _VIEWER_PERMISSIONS = frozenset(
     {
         Permission.CRON_JOBS_READ,
         Permission.TASKS_READ,
+        Permission.SCRIPTS_READ,
         Permission.EXECUTIONS_READ,
     }
 )

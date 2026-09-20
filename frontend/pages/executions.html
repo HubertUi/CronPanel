@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ejecuciones | CronPanel</title>
+    <link rel="stylesheet" href="../assets/css/main.css">
+    <link rel="stylesheet" href="../assets/css/dashboard.css">
+    <link rel="stylesheet" href="../assets/css/cronjobs.css">
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="sidebar-brand">Cron<span class="brand-accent">Panel</span></div>
+        <nav class="sidebar-nav">
+            <a href="dashboard.html" class="nav-item">Dashboard</a>
+            <a href="cron-jobs.html" class="nav-item">Automatizaciones</a>
+            <a href="scripts.html" class="nav-item">Scripts</a>
+            <a href="executions.html" class="nav-item active">Ejecuciones</a>
+            <span class="nav-separator"></span>
+            <span class="nav-item disabled" title="Disponible en próximas fases">Usuarios</span>
+            <span class="nav-item disabled" title="Disponible en próximas fases">Roles</span>
+            <span class="nav-separator"></span>
+            <span class="nav-item disabled" title="Disponible en próximas fases">Auditoría</span>
+        </nav>
+    </aside>
+
+    <main class="content">
+        <header class="topbar">
+            <h2>Ejecuciones</h2>
+            <div class="user-box">
+                <span id="user-role" class="role-badge"></span>
+                <span id="user-name"></span>
+                <button id="logout-button" class="btn btn-secondary btn-small">Salir</button>
+            </div>
+        </header>
+
+        <div id="page-alert" class="alert alert-error hidden"></div>
+
+        <section class="toolbar">
+            <select id="filter-status" class="search-input">
+                <option value="">Todos los estados</option>
+                <option value="running">En ejecución</option>
+                <option value="success">Éxito</option>
+                <option value="failed">Fallida</option>
+                <option value="timed_out">Agotó el tiempo</option>
+            </select>
+            <button id="refresh-button" class="btn btn-secondary">Actualizar</button>
+        </section>
+
+        <section class="card">
+            <div class="table-wrap">
+                <table class="cron-table" id="executions-table">
+                    <thead>
+                        <tr>
+                            <th>Tarea</th>
+                            <th>Script</th>
+                            <th>Estado</th>
+                            <th>Disparador</th>
+                            <th>Código</th>
+                            <th>Duración</th>
+                            <th>Iniciado</th>
+                            <th>Usuario</th>
+                            <th class="actions-col">Salida</th>
+                        </tr>
+                    </thead>
+                    <tbody id="executions-body">
+                        <tr id="loading-row"><td colspan="9" class="muted">Cargando…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <div id="run-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <header class="modal-header">
+                <h3 id="run-title">Ejecución</h3>
+                <button type="button" class="modal-close" id="run-close" aria-label="Cerrar">&times;</button>
+            </header>
+            <p id="run-status" class="muted"></p>
+            <div class="exec-output-area">
+                <h4>Salida estándar (stdout)</h4>
+                <pre id="run-stdout" class="exec-output"></pre>
+                <h4>Errores (stderr)</h4>
+                <pre id="run-stderr" class="exec-output"></pre>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" id="run-done">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="../assets/js/api.js"></script>
+    <script src="../assets/js/auth.js"></script>
+    <script src="../assets/js/executions.js"></script>
+</body>
+</html>

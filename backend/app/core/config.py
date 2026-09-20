@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     LOGIN_RATE_LIMIT: int = 5
     LOGIN_RATE_WINDOW_SECONDS: int = 300
 
+    # Execution engine (Phase 4)
+    EXECUTION_TIMEOUT_SECONDS: int = 10
+    EXECUTION_OUTPUT_MAX_CHARS: int = 65536
+    EXECUTION_SCRIPTS_DIR: str = ""
+
     # Password policy
     PASSWORD_MIN_LENGTH: int = 10
 
@@ -96,6 +101,31 @@ class Settings(BaseSettings):
         if not 1 <= value <= 86400:
             raise ValueError("LOGIN_RATE_WINDOW_SECONDS must be between 1 and 86400.")
         return value
+
+    @field_validator("EXECUTION_TIMEOUT_SECONDS")
+    @classmethod
+    def validate_execution_timeout(cls, value: int) -> int:
+        if not 1 <= value <= 300:
+            raise ValueError("EXECUTION_TIMEOUT_SECONDS must be between 1 and 300.")
+        return value
+
+    @field_validator("EXECUTION_OUTPUT_MAX_CHARS")
+    @classmethod
+    def validate_execution_output_max_chars(cls, value: int) -> int:
+        if not 1024 <= value <= 1_000_000:
+            raise ValueError("EXECUTION_OUTPUT_MAX_CHARS must be between 1024 and 1000000.")
+        return value
+
+    @property
+    def execution_scripts_dir(self) -> Path:
+        """Root directory that hosts allowed script files.
+
+        Everything the executor launches must live under this directory; any
+        path escaping it is rejected by the policy layer before execution.
+        """
+        value = self.EXECUTION_SCRIPTS_DIR.strip()
+        root = Path(value) if value else BASE_DIR / "scripts_allowlist"
+        return root.expanduser().resolve()
 
     @field_validator("PASSWORD_MIN_LENGTH")
     @classmethod

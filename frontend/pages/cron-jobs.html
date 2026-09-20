@@ -14,8 +14,8 @@
         <nav class="sidebar-nav">
             <a href="dashboard.html" class="nav-item">Dashboard</a>
             <a href="cron-jobs.html" class="nav-item active">Automatizaciones</a>
-            <span class="nav-item disabled" title="Disponible en próximas fases">Scripts</span>
-            <span class="nav-item disabled" title="Disponible en próximas fases">Ejecuciones</span>
+            <a href="scripts.html" class="nav-item">Scripts</a>
+            <a href="executions.html" class="nav-item">Ejecuciones</a>
             <span class="nav-separator"></span>
             <span class="nav-item disabled" title="Disponible en próximas fases">Usuarios</span>
             <span class="nav-item disabled" title="Disponible en próximas fases">Roles</span>
@@ -91,6 +91,13 @@
                     <p id="schedule-hint" class="field-hint"></p>
                 </div>
                 <div class="form-group">
+                    <label for="job-script">Script vinculado (allow-list)</label>
+                    <select id="job-script" class="search-input">
+                        <option value="">— Sin script —</option>
+                    </select>
+                    <p class="field-hint" id="job-script-hint"></p>
+                </div>
+                <div class="form-group">
                     <label for="job-description">Descripción</label>
                     <textarea id="job-description" rows="2" maxlength="2000"></textarea>
                 </div>
@@ -112,6 +119,26 @@
             <ul id="history-list" class="history-list"></ul>
             <div class="modal-actions">
                 <button type="button" class="btn btn-secondary" id="history-done">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: resultado de ejecución -->
+    <div id="run-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <header class="modal-header">
+                <h3 id="run-title">Ejecución</h3>
+                <button type="button" class="modal-close" id="run-close" aria-label="Cerrar">&times;</button>
+            </header>
+            <p id="run-status" class="muted"></p>
+            <div class="exec-output-area">
+                <h4>Salida estándar (stdout)</h4>
+                <pre id="run-stdout" class="exec-output"></pre>
+                <h4>Errores (stderr)</h4>
+                <pre id="run-stderr" class="exec-output"></pre>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" id="run-done">Cerrar</button>
             </div>
         </div>
     </div>

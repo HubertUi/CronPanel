@@ -41,7 +41,9 @@ Estructura de tests:
 | `test_permissions.py` | Matriz RBAC admin/operator/viewer |
 | `test_health.py` | Health check y 404 estructurado |
 | `test_cron_validator.py` | Validador de expresiones cron: inválidas, validas, normalización, descripción |
-| `test_cron_jobs.py` | CRUD de tareas, propiedad (404/403), RBAC, historial, auditoría, no-ejecución (AST) |
+| `test_cron_jobs.py` | CRUD de tareas, propiedad (404/403), RBAC, historial, auditoría, no-ejecución (AST), enlace de script y ejecución manual |
+| `test_scripts.py` | Registro en allow-list, rechazos de ruta (relativa/fuera/symlink), RBAC, auditoría, borrado suave y bloqueo de borrado en uso |
+| `test_executions.py` | Resultados (éxito/fallo/timeout), recorte de salida, rechazos previos (tarea inactiva/sin script), RBAC/propiedad, argv seguro, alcance por filtros, contrato AST y spy de crontab |
 
 ## Convenciones del proyecto
 
@@ -80,12 +82,32 @@ utils/       → helpers genéricos (datetime, request)
 5. Tests en `tests/`.
 6. Si hay cambio de esquema: crear migración con `alembic revision`.
 
+### Reglas de ejecución (Fase 4)
+
+- **La ejecución solo usa scripts registrados** dentro de la allow-list
+  (`EXECUTION_SCRIPTS_DIR`). Ruta absoluta + `Path.resolve(strict=True)` dentro
+  del directorio en registro y en cada ejecución.
+- **Un único lugar ejecuta**: `app/execution/executor.py` (`subprocess.run`,
+  `shell=False`). Está prohibido importar `subprocess` fuera de ahí; se
+  verifica con un test AST. Nada de `os.system`/`os.popen`/`eval`/`exec`
+  ni de tocar el crontab del sistema.
+- `argv` se construye por tipo de archivo (`[sys.executable, path]` para
+  `.py`); **no se aceptan argumentos del cliente** y el `command` de la tarea
+  se ignora.
+- Entorno mínimo sin secretos; timeout y recorte de salida desde config.
+- Cada ejecución se persiste con `status=running` y finaliza en
+  `success`/`failed`/`timed_out`, auditar en cada transición
+  (`EXECUTION_STARTED/SUCCEEDED/FAILED/TIMED_OUT`).
+- Propiedad replica la de tareas: ejecuciones/lecturas de tarea ajena → 404
+  (o 403 en ejecución).
+
 ### Reglas del módulo de tareas cron
 
-- **Nunca ejecutar nada.** `subprocess`, `os.system`, `os.popen`, `shell=True`,
-  `eval/exec` y escribir en el crontab del sistema están prohibidos en este
-  módulo. Hay un test AST (`test_cron_job_source_never_calls_execution_primitives`)
-  que lo verifica en cada ejecución.
+- **El `command` nunca se ejecuta.** Prohibidos aquí `subprocess`,
+  `os.system`, `os.popen`, `shell=True`, `eval/exec` y el crontab del sistema.
+  Hay un test AST (`test_cron_job_source_never_calls_execution_primitives`)
+  que lo verifica en cada ejecución. La única ejecución posible es la del
+  `script_id` enlazado, y vive en `app/execution/` (reglas arriba).
 - La **única fuente de verdad** de la programación es `schedule_expression`.
   Los cinco campos (`minute`…`day_of_week`) se derivan en el servicio; la API
   no los acepta del cliente (`extra="forbid"` en los schemas).
@@ -132,9 +154,9 @@ en modo offline/check). En desarrollo, las tablas se crean con `create_all()`.
 
 ## Orden de fases acordado
 
-Fase 1 (completada) → 2 autenticación completa ✔ → 3 tareas cron ✔ → 4 cron
-builder → 5 cron manager → 6 scripts → 7 ejecución segura → 8 historial de
-ejecuciones → 9 dashboard → 10 auditoría/usuarios (frontend) → 11 hardening →
-12 testing → 13 documentación final.
+Fase 1 (completada) → 2 autenticación completa ✔ → 3 tareas cron ✔ → 4
+scripts + ejecución segura + historial de ejecuciones ✔ → 5 cron builder → 6
+cron manager → 7 planificador → 8 dashboard → 9 auditoría/usuarios (frontend)
+→ 10 hardening → 11 testing → 12 documentación final.
 
 Regla del proyecto: no avanzar de fase hasta que la actual esté estable y probada.

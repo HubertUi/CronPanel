@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scripts | CronPanel</title>
+    <link rel="stylesheet" href="../assets/css/main.css">
+    <link rel="stylesheet" href="../assets/css/dashboard.css">
+    <link rel="stylesheet" href="../assets/css/cronjobs.css">
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="sidebar-brand">Cron<span class="brand-accent">Panel</span></div>
+        <nav class="sidebar-nav">
+            <a href="dashboard.html" class="nav-item">Dashboard</a>
+            <a href="cron-jobs.html" class="nav-item">Automatizaciones</a>
+            <a href="scripts.html" class="nav-item active">Scripts</a>
+            <a href="executions.html" class="nav-item">Ejecuciones</a>
+            <span class="nav-separator"></span>
+            <span class="nav-item disabled" title="Disponible en próximas fases">Usuarios</span>
+            <span class="nav-item disabled" title="Disponible en próximas fases">Roles</span>
+            <span class="nav-separator"></span>
+            <span class="nav-item disabled" title="Disponible en próximas fases">Auditoría</span>
+        </nav>
+    </aside>
+
+    <main class="content">
+        <header class="topbar">
+            <h2>Scripts permitidos</h2>
+            <div class="user-box">
+                <span id="user-role" class="role-badge"></span>
+                <span id="user-name"></span>
+                <button id="logout-button" class="btn btn-secondary btn-small">Salir</button>
+            </div>
+        </header>
+
+        <section class="card">
+            <p class="muted">
+                Solo los administradores registran scripts. Cada script es un archivo dentro
+                del directorio permitido (allow-list); las tareas se enuncian a un script y el
+                motor de ejecución lo lanza con un entorno mínimo, sin shell y con tiempo límite.
+            </p>
+        </section>
+
+        <div id="page-alert" class="alert alert-error hidden"></div>
+
+        <section class="toolbar">
+            <button id="new-script-button" class="btn btn-primary">Nuevo script</button>
+        </section>
+
+        <section class="card">
+            <div class="table-wrap">
+                <table class="cron-table" id="scripts-table">
+                    <thead>
+                        <tr>
+                            <th>Nombre</th>
+                            <th>Ruta</th>
+                            <th>Estado</th>
+                            <th>Creado por</th>
+                            <th class="actions-col">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="scripts-body">
+                        <tr id="loading-row"><td colspan="5" class="muted">Cargando…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <div id="script-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <header class="modal-header">
+                <h3 id="modal-title">Nuevo script</h3>
+                <button type="button" class="modal-close" id="modal-close" aria-label="Cerrar">&times;</button>
+            </header>
+            <form id="script-form" novalidate>
+                <input type="hidden" id="script-id">
+                <div class="form-group">
+                    <label for="script-name">Nombre</label>
+                    <input type="text" id="script-name" maxlength="200" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label for="script-path">Ruta absoluta del archivo</label>
+                    <input type="text" id="script-path" maxlength="2000" autocomplete="off" spellcheck="false">
+                    <p class="field-hint" id="script-path-hint"></p>
+                </div>
+                <div class="form-group">
+                    <label for="script-description">Descripción</label>
+                    <textarea id="script-description" rows="2" maxlength="2000"></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="script-enabled" checked>
+                        Habilitado para ejecución
+                    </label>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" id="modal-cancel">Cancelar</button>
+                    <button type="submit" class="btn btn-primary" id="modal-save">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="../assets/js/api.js"></script>
+    <script src="../assets/js/auth.js"></script>
+    <script src="../assets/js/scripts.js"></script>
+</body>
+</html>

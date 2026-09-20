@@ -44,6 +44,11 @@ class CronJob(Base):
     owner_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    # Optional link to an allow-listed script (Phase 4). When set, executions
+    # run that script instead of interpreting the free-form `command` field.
+    script_id: Mapped[int | None] = mapped_column(
+        ForeignKey("scripts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
@@ -53,6 +58,8 @@ class CronJob(Base):
     )
 
     owner = relationship("User", back_populates="cron_jobs")
+    script = relationship("Script")
+    executions = relationship("Execution", back_populates="cron_job")
     history = relationship(
         "CronJobHistory",
         back_populates="cron_job",
