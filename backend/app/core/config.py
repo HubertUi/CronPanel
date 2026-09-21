@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     EXECUTION_OUTPUT_MAX_CHARS: int = 65536
     EXECUTION_SCRIPTS_DIR: str = ""
 
+    # Scheduler (Phase 5)
+    SCHEDULER_ENABLED: bool = True
+    SCHEDULER_TIMEZONE: str = "America/Lima"
+    SCHEDULER_MISFIRE_GRACE_SECONDS: int = 90
+    SCHEDULER_SYNC_INTERVAL_SECONDS: int = 30
+
     # Password policy
     PASSWORD_MIN_LENGTH: int = 10
 
@@ -115,6 +121,36 @@ class Settings(BaseSettings):
         if not 1024 <= value <= 1_000_000:
             raise ValueError("EXECUTION_OUTPUT_MAX_CHARS must be between 1024 and 1000000.")
         return value
+
+    @field_validator("SCHEDULER_TIMEZONE")
+    @classmethod
+    def validate_scheduler_timezone(cls, value: str) -> str:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError:
+            raise ValueError(f"SCHEDULER_TIMEZONE is not a valid IANA timezone: '{value}'.")
+        return value
+
+    @field_validator("SCHEDULER_MISFIRE_GRACE_SECONDS")
+    @classmethod
+    def validate_scheduler_misfire_grace(cls, value: int) -> int:
+        if not 0 <= value <= 86400:
+            raise ValueError("SCHEDULER_MISFIRE_GRACE_SECONDS must be between 0 and 86400.")
+        return value
+
+    @field_validator("SCHEDULER_SYNC_INTERVAL_SECONDS")
+    @classmethod
+    def validate_scheduler_sync_interval(cls, value: int) -> int:
+        if not 5 <= value <= 86400:
+            raise ValueError("SCHEDULER_SYNC_INTERVAL_SECONDS must be between 5 and 86400.")
+        return value
+
+    @property
+    def scheduler_timezone(self) -> str:
+        """Time zone the scheduler interprets cron expressions in (default: America/Lima)."""
+        return self.SCHEDULER_TIMEZONE
 
     @property
     def execution_scripts_dir(self) -> Path:

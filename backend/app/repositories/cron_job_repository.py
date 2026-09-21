@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models.cron_job import CronJob
 from app.models.cron_job_history import CronJobHistory
+from app.models.script import Script
 
 
 class CronJobRepository:
@@ -50,6 +51,27 @@ class CronJobRepository:
             .offset(max(0, offset))
         )
         return list(self.session.execute(statement).scalars())
+
+    def list_eligible_for_scheduling(self) -> list[CronJob]:
+        """CronJobs the scheduler may register (Phase 5).
+
+        Only jobs that are alive, active and bound to an existing, enabled
+        script qualify; anything else is filtered out so the scheduler never
+        arms a task that could not run right now.
+        """
+        statement = (
+            select(CronJob)
+            .join(Script, CronJob.script_id == Script.id)
+            .where(
+                CronJob.is_deleted.is_(False),
+                CronJob.is_active.is_(True),
+                CronJob.script_id.isnot(None),
+                Script.is_deleted.is_(False),
+                Script.is_enabled.is_(True),
+            )
+            .order_by(CronJob.id.asc())
+        )
+        return list(self.session.execute(statement).scalars().unique())
 
     def add(self, cron_job: CronJob, commit: bool = True) -> CronJob:
         self.session.add(cron_job)

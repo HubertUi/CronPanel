@@ -45,6 +45,9 @@ class Permission:
     # Audit
     AUDIT_READ = "audit.read"
 
+    # Scheduler (Phase 5)
+    SCHEDULER_READ = "scheduler.read"
+
     # Settings
     SETTINGS_READ = "settings.read"
     SETTINGS_UPDATE = "settings.update"

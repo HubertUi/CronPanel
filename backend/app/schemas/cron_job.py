@@ -115,6 +115,11 @@ class CronJobResponse(BaseModel):
     owner_id: int
     script_id: int | None = None
     script_name: str | None = None
+    # Phase 5: real values when available (computed from the scheduler and the
+    # last persisted execution); None when they cannot be known for sure.
+    next_run_at: datetime | None = None
+    last_execution_status: str | None = None
+    last_execution_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

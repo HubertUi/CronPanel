@@ -17,7 +17,15 @@ from sqlalchemy.orm import Session
 
 from app.core import audit_actions as AuditAction
 from app.core.config import settings
-from app.core.execution_status import FAILED, RUNNING, SUCCESS, TIMED_OUT
+from app.core.execution_status import (
+    FAILED,
+    RUNNING,
+    SUCCESS,
+    SYSTEM_ACTOR_USERNAME,
+    TIMED_OUT,
+    TRIGGER_MANUAL,
+    TRIGGER_SCHEDULED,
+)
 from app.core.permissions import is_full_access_role
 from app.execution.executor import execute_script
 from app.execution.policy import ScriptPathError, canonicalize_script_path
@@ -77,12 +85,60 @@ def run_cron_job(
     *,
     ip_address: str | None = None,
 ) -> Execution:
-    """Execute a CronJob's bound script synchronously and persist the result."""
+    """Execute a CronJob's bound script synchronously and persist the result.
+
+    Manual invocation (web UI / API): ownership + RBAC are enforced.
+    """
     job = CronJobRepository(session).get_by_id(job_id)
     if job is None:
         raise CronJobNotFoundError
     if not _can_execute(job, actor):
         raise CronJobAccessDeniedError
+    return _run(
+        session,
+        job,
+        trigger=TRIGGER_MANUAL,
+        actor_id=actor.id,
+        actor_username=actor.username,
+        ip_address=ip_address,
+    )
+
+
+def run_scheduled_cron_job(
+    session: Session,
+    job_id: int,
+) -> Execution:
+    """Execute a CronJob on behalf of the internal scheduler.
+
+    There is no user session behind this call: the scheduled run is a system
+    operation, so ownership/RBAC do not apply. Every Phase 4 policy check
+    (job active, script exists/enabled/inside the allow-list) still runs
+    before any process starts. The audit trail records the actor as the
+    system, never a real user.
+    """
+    job = CronJobRepository(session).get_by_id(job_id)
+    if job is None:
+        raise CronJobNotFoundError
+    return _run(
+        session,
+        job,
+        trigger=TRIGGER_SCHEDULED,
+        actor_id=None,
+        actor_username=SYSTEM_ACTOR_USERNAME,
+        ip_address=None,
+    )
+
+
+def _run(
+    session: Session,
+    job: CronJob,
+    *,
+    trigger: str,
+    actor_id: int | None,
+    actor_username: str | None,
+    ip_address: str | None,
+) -> Execution:
+    """Shared execution pipeline: policy → executor → persisted result + audit."""
     if not job.is_active:
         raise JobInactiveError
 
@@ -91,17 +147,17 @@ def run_cron_job(
     execution = Execution(
         cron_job_id=job.id,
         script_id=script.id,
-        trigger="manual",
+        trigger=trigger,
         status=RUNNING,
-        username=actor.username,
+        username=actor_username,
         ip_address=ip_address,
     )
     ExecutionRepository(session).add(execution, commit=False)
     audit_service.record_event(
         session,
         AuditAction.EXECUTION_STARTED,
-        user_id=actor.id,
-        username=actor.username,
+        user_id=actor_id,
+        username=actor_username,
         resource="execution",
         resource_id=str(execution.id),
         ip_address=ip_address,
@@ -110,7 +166,7 @@ def run_cron_job(
             "cron_job_name": job.name,
             "script_id": script.id,
             "script_name": script.name,
-            "trigger": "manual",
+            "trigger": trigger,
         },
         commit=True,
     )
@@ -142,8 +198,8 @@ def run_cron_job(
     audit_service.record_event(
         session,
         final_action,
-        user_id=actor.id,
-        username=actor.username,
+        user_id=actor_id,
+        username=actor_username,
         resource="execution",
         resource_id=str(execution.id),
         ip_address=ip_address,
@@ -155,7 +211,7 @@ def run_cron_job(
             "status": status,
             "exit_code": result.exit_code,
             "duration_ms": result.duration_ms,
-            "trigger": "manual",
+            "trigger": trigger,
         },
         commit=False,
     )

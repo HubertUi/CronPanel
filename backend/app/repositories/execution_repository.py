@@ -3,6 +3,7 @@
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
+from app.core.execution_status import RUNNING
 from app.models.cron_job import CronJob
 from app.models.execution import Execution
 from app.models.script import Script
@@ -71,6 +72,26 @@ class ExecutionRepository:
         the execution history the user is allowed to see."""
         statement = select(CronJob.id).where(CronJob.owner_id == owner_id)
         return list(self.session.execute(statement).scalars())
+
+    def has_running_execution(self, cron_job_id: int) -> bool:
+        """True when the job has a run still in flight (Phase 5 concurrency
+        rule: no two simultaneous executions of the same CronJob)."""
+        statement = select(Execution.id).where(
+            Execution.cron_job_id == cron_job_id,
+            Execution.status == RUNNING,
+        )
+        return self.session.execute(statement).first() is not None
+
+    def latest_for_job(self, cron_job_id: int) -> Execution | None:
+        """Most recent execution (by id) of a job, used by the UI to show
+        ``last execution`` info without inventing it."""
+        statement = (
+            select(Execution)
+            .where(Execution.cron_job_id == cron_job_id)
+            .order_by(Execution.id.desc())
+            .limit(1)
+        )
+        return self.session.execute(statement).scalar_one_or_none()
 
     def list(
         self,

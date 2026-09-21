@@ -14,6 +14,8 @@ from app.core.permissions import Permission
 from app.database.database import get_db
 from app.execution.policy import ScriptPathError
 from app.models.user import User
+from app.repositories.execution_repository import ExecutionRepository
+from app.scheduler import registry as scheduler_registry
 from app.schemas.cron_job import (
     CronJobCreate,
     CronJobHistoryResponse,
@@ -36,7 +38,18 @@ def _error(status_code: int, error: str, message: str, **extra) -> HTTPException
     return HTTPException(status_code=status_code, detail=detail)
 
 
-def _to_response(job) -> CronJobResponse:
+def _to_response(job, db: Session | None = None) -> CronJobResponse:
+    next_run_at = None
+    last_status = None
+    last_at = None
+    if db is not None and not job.is_deleted:
+        scheduler = scheduler_registry.get_scheduler()
+        if scheduler is not None and scheduler.running:
+            next_run_at = scheduler.next_run(job.id)
+        latest = ExecutionRepository(db).latest_for_job(job.id)
+        if latest is not None:
+            last_status = latest.status
+            last_at = latest.started_at
     return CronJobResponse(
         id=job.id,
         name=job.name,
@@ -53,6 +66,9 @@ def _to_response(job) -> CronJobResponse:
         owner_id=job.owner_id,
         script_id=job.script_id,
         script_name=job.script.name if job.script else None,
+        next_run_at=next_run_at,
+        last_execution_status=last_status,
+        last_execution_at=last_at,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
@@ -89,7 +105,7 @@ def list_cron_jobs(
         offset=offset,
     )
     jobs = cron_job_service.list_cron_jobs(db, current_user, filters)
-    return [_to_response(job) for job in jobs]
+    return [_to_response(job, db) for job in jobs]
 
 
 @router.post("", response_model=CronJobResponse, status_code=status.HTTP_201_CREATED)
@@ -112,7 +128,8 @@ def create_cron_job(
         )
     except cron_job_service.ScriptReferenceNotFoundError:
         raise _error(400, "SCRIPT_NOT_FOUND", "El script asignado no existe.")
-    return _to_response(job)
+    scheduler_registry.notify_job_changed(job.id)
+    return _to_response(job, db)
 
 
 @router.get("/{cron_job_id}", response_model=CronJobResponse)
@@ -125,7 +142,7 @@ def get_cron_job(
         job = cron_job_service.get_cron_job(db, cron_job_id, current_user)
     except cron_job_service.CronJobNotFoundError:
         raise _error(404, "CRON_JOB_NOT_FOUND", "Tarea no encontrada.")
-    return _to_response(job)
+    return _to_response(job, db)
 
 
 @router.get("/{cron_job_id}/history", response_model=list[CronJobHistoryResponse])
@@ -181,7 +198,8 @@ def update_cron_job(
         raise _error(403, "CRON_JOB_FORBIDDEN", "No tiene permisos sobre esta tarea.")
     except cron_job_service.ScriptReferenceNotFoundError:
         raise _error(400, "SCRIPT_NOT_FOUND", "El script asignado no existe.")
-    return _to_response(job)
+    scheduler_registry.notify_job_changed(job.id)
+    return _to_response(job, db)
 
 
 @router.patch("/{cron_job_id}/status", response_model=CronJobResponse)
@@ -204,7 +222,11 @@ def update_cron_job_status(
         raise _error(404, "CRON_JOB_NOT_FOUND", "Tarea no encontrada.")
     except cron_job_service.CronJobAccessDeniedError:
         raise _error(403, "CRON_JOB_FORBIDDEN", "No tiene permisos sobre esta tarea.")
-    return _to_response(job)
+    if body.is_active:
+        scheduler_registry.notify_job_changed(job.id)
+    else:
+        scheduler_registry.notify_job_removed(job.id)
+    return _to_response(job, db)
 
 
 @router.delete("/{cron_job_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -225,6 +247,7 @@ def delete_cron_job(
         raise _error(404, "CRON_JOB_NOT_FOUND", "Tarea no encontrada.")
     except cron_job_service.CronJobAccessDeniedError:
         raise _error(403, "CRON_JOB_FORBIDDEN", "No tiene permisos sobre esta tarea.")
+    scheduler_registry.notify_job_removed(cron_job_id)
 
 
 @router.post("/{cron_job_id}/execute", response_model=ExecutionResponse)

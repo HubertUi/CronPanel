@@ -13,6 +13,7 @@ from app.core.permissions import Permission
 from app.database.database import get_db
 from app.execution.policy import ScriptPathError
 from app.models.user import User
+from app.scheduler import registry as scheduler_registry
 from app.schemas.script import ScriptCreate, ScriptResponse, ScriptUpdate
 from app.services import script_service
 from app.utils.request import get_client_ip
@@ -108,6 +109,7 @@ def update_script(
         raise _error(400, exc.code, str(exc))
     except script_service.ScriptNameConflictError:
         raise _error(409, "SCRIPT_NAME_CONFLICT", "Ya existe un script con ese nombre.")
+    scheduler_registry.resync()
     return _to_response(script)
 
 

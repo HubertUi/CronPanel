@@ -184,7 +184,7 @@
         if (!jobs || jobs.length === 0) {
             const tr = document.createElement("tr");
             const td = document.createElement("td");
-            td.colSpan = 6;
+            td.colSpan = 8;
             td.className = "muted";
             td.textContent = "No hay tareas programadas.";
             tr.appendChild(td);
@@ -231,6 +231,35 @@
             badge.textContent = job.is_active ? "Activa" : "Inactiva";
             statusTd.appendChild(badge);
             tr.appendChild(statusTd);
+
+            const nextTd = document.createElement("td");
+            if (job.next_run_at) {
+                nextTd.textContent = new Date(job.next_run_at).toLocaleString();
+                nextTd.className = "next-run";
+            } else {
+                nextTd.textContent = job.is_active ? "—" : "Pausada";
+                nextTd.className = "muted";
+            }
+            tr.appendChild(nextTd);
+
+            const lastTd = document.createElement("td");
+            if (job.last_execution_status) {
+                const lastBadge = document.createElement("span");
+                lastBadge.className = "status-badge " +
+                    (job.last_execution_status === "success" ? "status-active" : "status-inactive");
+                lastBadge.textContent = executionStatusLabels[job.last_execution_status] || job.last_execution_status;
+                lastTd.appendChild(lastBadge);
+                if (job.last_execution_at) {
+                    const when = document.createElement("div");
+                    when.className = "muted last-run-time";
+                    when.textContent = new Date(job.last_execution_at).toLocaleString();
+                    lastTd.appendChild(when);
+                }
+            } else {
+                lastTd.textContent = "—";
+                lastTd.className = "muted";
+            }
+            tr.appendChild(lastTd);
 
             const actionsTd = document.createElement("td");
             actionsTd.className = "actions-col";

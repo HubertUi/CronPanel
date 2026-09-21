@@ -20,6 +20,10 @@ os.environ.setdefault("BCRYPT_ROUNDS", "4")
 os.environ.setdefault("PASSWORD_MIN_LENGTH", "8")
 os.environ["DATABASE_URL"] = f"sqlite:///{(_TEST_DIR / 'test_cronpanel.db').as_posix()}"
 os.environ["EXECUTION_SCRIPTS_DIR"] = str(_TEST_DIR / "allowlist")
+# The app-level scheduler stays OFF during the suite (deterministic tests,
+# no background threads). Scheduler behaviour is covered by dedicated tests
+# that instantiate CronScheduler explicitly.
+os.environ["SCHEDULER_ENABLED"] = "false"
 Path(os.environ["EXECUTION_SCRIPTS_DIR"]).mkdir(parents=True, exist_ok=True)
 
 import pytest  # noqa: E402
@@ -31,15 +35,15 @@ from app.main import app  # noqa: E402
 
 ADMIN_USERNAME = "admin_test"
 ADMIN_EMAIL = "admin@test.local"
-ADMIN_PASSWORD = "Tp-" + secret_utils.token_urlsafe(16)
+ADMIN_PASSWORD = "Tp-" + secret_utils.token_urlsafe(16) + "9"
 
 OPERATOR_USERNAME = "operator_test"
 OPERATOR_EMAIL = "operator@test.local"
-OPERATOR_PASSWORD = "Tp-" + secret_utils.token_urlsafe(16)
+OPERATOR_PASSWORD = "Tp-" + secret_utils.token_urlsafe(16) + "9"
 
 VIEWER_USERNAME = "viewer_test"
 VIEWER_EMAIL = "viewer@test.local"
-VIEWER_PASSWORD = "Tp-" + secret_utils.token_urlsafe(16)
+VIEWER_PASSWORD = "Tp-" + secret_utils.token_urlsafe(16) + "9"
 
 
 @pytest.fixture(autouse=True)

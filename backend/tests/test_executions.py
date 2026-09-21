@@ -327,11 +327,19 @@ PHASE4_NO_SUBPROCESS = [
     "app/schemas/script.py",
     "app/schemas/execution.py",
     "app/schemas/cron_job.py",
+    "app/schemas/scheduler.py",
+    "app/api/routes/scheduler.py",
+    "app/scheduler/service.py",
+    "app/scheduler/jobs.py",
+    "app/scheduler/registry.py",
 ]
 
 # Docstrings legitimately *describe* the security contract; these files are
 # therefore scanned via AST only (no raw-text word checks).
-PHASE4_AST_ONLY = ["app/execution/__init__.py"]
+PHASE4_AST_ONLY = [
+    "app/execution/__init__.py",
+    "app/scheduler/__init__.py",
+]
 
 
 def _parse_tree(relative: Path, backend_dir: Path) -> tuple[Path, ast.Module]:

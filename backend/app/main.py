@@ -21,6 +21,7 @@ from app.api.routes import cron_jobs as cron_jobs_routes
 from app.api.routes import executions as executions_routes
 from app.api.routes import health as health_routes
 from app.api.routes import scripts as scripts_routes
+from app.api.routes import scheduler as scheduler_routes
 from app.api.routes import users as users_routes
 from app.core.config import BASE_DIR, settings
 from app.core.logging import get_logger, setup_logging
@@ -60,8 +61,25 @@ async def lifespan(_: FastAPI):
             RevokedTokenRepository(session).purge_expired()
     except Exception:  # noqa: BLE001
         pass
+
+    scheduler = None
+    if settings.SCHEDULER_ENABLED:
+        from app.scheduler.registry import bind
+        from app.scheduler.service import CronScheduler
+
+        scheduler = CronScheduler()
+        scheduler.start()
+        bind(scheduler)
+        logger.info(
+            "Scheduler registered %s cron job(s).",
+            scheduler.armed_count(),
+        )
+
     logger.info("%s v%s started.", settings.APP_NAME, settings.APP_VERSION)
     yield
+    if scheduler is not None:
+        scheduler.shutdown()
+        bind(None)
     logger.info("%s stopped.", settings.APP_NAME)
 
 
@@ -138,6 +156,7 @@ app.include_router(auth_routes.router)
 app.include_router(users_routes.router)
 app.include_router(cron_jobs_routes.router)
 app.include_router(scripts_routes.router)
+app.include_router(scheduler_routes.router)
 app.include_router(executions_routes.router)
 
 if FRONTEND_DIR.exists():
