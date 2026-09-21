@@ -1,0 +1,20 @@
+services:
+  cronpanel:
+    build:
+      context: .
+    image: cronpanel:latest
+    container_name: cronpanel
+    env_file:
+      - .env.docker
+    ports:
+      - "8000:8000"
+    volumes:
+      - cronpanel-data:/app/backend/data
+      - cronpanel-logs:/app/backend/logs
+      - cronpanel-scripts:/app/backend/scripts_allowlist
+    restart: unless-stopped
+
+volumes:
+  cronpanel-data:
+  cronpanel-logs:
+  cronpanel-scripts:

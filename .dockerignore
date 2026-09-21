@@ -1,0 +1,36 @@
+# Git / VCS
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Secrets / environment (only keep the example)
+.env
+.env.*
+!*.env.example
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+
+# Local verification scripts
+backend/smoke_test.py
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
