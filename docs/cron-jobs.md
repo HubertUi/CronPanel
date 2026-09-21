@@ -1,7 +1,7 @@
-# Módulo de tareas cron (Automatizaciones) — Fases 3-4
+# Módulo de tareas cron (Automatizaciones) — Fases 3-5
 
 > Documento del submódulo de automatizaciones. Complementa
-> `architecture.md`, `security.md`, `api.md` y `execution.md`.
+> `architecture.md`, `security.md`, `api.md`, `execution.md` y `scheduler.md`.
 
 ## Qué hace y qué NO hace
 
@@ -16,13 +16,16 @@ validación de expresiones cron, historial por tarea y auditoría global.
   `/var/spool/cron` ni en ninguna parte del sistema.
 - El campo `command` es un **dato informativo**.
 
-**Qué sí se ejecuta (Fase 4)**: si la tarea enlaza un script registrado
+**Qué sí se ejecuta (Fases 4-5)**: si la tarea enlaza un script registrado
 (`script_id`), `POST /api/cron-jobs/{id}/execute` lanza **ese script** con el
 runner seguro (ver `execution.md`), usando solo la ruta registrada y sin
-argumentos del cliente. Todo ello se garantiza con un test estático (AST) que
-inspecciona los módulos de tareas y de ejecución en busca de primitivas de
-ejecución prohibidas y rutas del crontab del sistema, y con un spy de runtime
-que vigila que `crontab` jamás se invoque.
+argumentos del cliente. Y desde la **Fase 5**, si la tarea está **activa** y
+con script enlazado, el planificador interno la ejecuta automáticamente según
+su `schedule_expression` (ver `scheduler.md`) — siempre por el mismo runner
+seguro, sin tocar el crontab del host. Todo ello se garantiza con un test
+estático (AST) que inspecciona los módulos de tareas, de ejecución y del
+scheduler en busca de primitivas de ejecución prohibidas y rutas del crontab
+del sistema, y con un spy de runtime que vigila que `crontab` jamás se invoque.
 
 ## Modelo de datos
 
@@ -117,6 +120,19 @@ completa; los errores y el detalle del runner están documentados en
 `api.md` y `execution.md`. Las ejecuciones se consultan en el submódulo de
 ejecuciones (`/api/executions`).
 
+### Planificación automática (Fase 5)
+
+- Una tarea **activa** con `script_id` enlazado se arma en el planificador
+  interno; el resto (pausada, sin script, script borrado/deshabilitado) queda
+  fuera de agenda.
+- `GET /api/cron-jobs` y `GET /api/cron-jobs/{id}` devuelven además
+  `next_run_at`, `last_execution_status` y `last_execution_at` (calculado,
+  nunca inventado).
+- El arnés del scheduler se actualiza en caliente tras crear/editar/pausar/
+  activar/borrar tareas (vía `app/scheduler/registry`); no hace falta reiniciar.
+- Las ejecuciones automáticas se registran con `trigger="scheduled"` y actor de
+  auditoría `system`; si el disparo no procede, queda `EXECUTION_SKIPPED`.
+
 ## Frontend
 
 `frontend/pages/cron-jobs.html` + `assets/js/cronjobs.js`:
@@ -133,6 +149,9 @@ ejecuciones (`/api/executions`).
   duración y estado de la ejecución.
 - Botones condicionados por rol (ocultos si el permiso no existe: noadmin
   no ve "Eliminar"; viewer no ve crear/editar/pausar/ejecutar).
+- Columnas **"Próxima ejecución"** y **"Última ejecución"** (badge de estado);
+  el listado se refresca al volver a la página o al cambiar datos para reflejar
+  los cambios del planificador.
 - Historial en modal con diff por campo; aviso en el diálogo de borrado de que
   el historial se conserva.
 - Aviso explícito en el formulario: "El comando se almacena como dato; la

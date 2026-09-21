@@ -240,13 +240,20 @@ Query params opcionales: `active` (bool), `name` (subcadena), `schedule`
     "human_description": "Todos los días a las 02:00",
     "is_active": true,
     "owner_id": 1,
+    "next_run_at": "2026-09-22T02:00:00-05:00",
+    "last_execution_status": "success",
+    "last_execution_at": "2026-09-21T02:00:01-05:00",
     "created_at": "2026-08-27T10:00:00",
     "updated_at": "2026-08-27T10:00:00"
   }
 ]
 ```
 
-`script_name` es `null` si no hay script enlazado o fue borrado.
+`script_name` es `null` si no hay script enlazado o fue borrado. Desde la
+**Fase 5**: `next_run_at` (próxima ocurrencia del planificador interno en
+`SCHEDULER_TIMEZONE`; `null` si la tarea no está armada: pausada, borrada, sin
+script, script deshabilitado o scheduler apagado), `last_execution_status` y
+`last_execution_at` (ambos `null` si nunca se ejecutó).
 
 ### `POST /api/cron-jobs` — crear tarea (`cron_jobs.create`)
 
@@ -450,6 +457,11 @@ persiste en `executions`.
 }
 ```
 
+Desde la **Fase 5** `trigger` puede ser `manual` (este endpoint) o `scheduled`
+(ejecución del **planificador interno**; el frontend de ejecuciones las etiqueta
+según el valor). Las ejecuciones `scheduled` no tienen cliente HTTP y usan el
+actor de auditoría virtual `system`.
+
 | Estado | Código | Motivo |
 |---|---|---|
 | 400 | `JOB_INACTIVE` | La tarea está pausada |
@@ -477,6 +489,36 @@ existencia).
 
 `200` con la ejecución (incluye `stdout`/`stderr`/`error`). La de una tarea
 ajena → `404 EXECUTION_NOT_FOUND`.
+
+---
+
+## Planificador (Fase 5)
+
+### `GET /api/scheduler/status` — estado del planificador (`scheduler.read`, solo admin)
+
+Inspección de solo lectura del planificador interno. **No existe endpoint de
+mutación**: los horarios cambian exclusivamente a través de los recursos
+`cron-jobs`/`scripts`.
+
+```json
+{
+  "running": true,
+  "jobs_registered": 3,
+  "last_sync": "2026-09-21T12:00:00",
+  "timezone": "America/Lima",
+  "misfire_grace_seconds": 90
+}
+```
+
+| Campo | Significado |
+|---|---|
+| `running` | Scheduler activo (arrancado en el lifespan) |
+| `jobs_registered` | Tareas armadas (excluye jobs internos) |
+| `last_sync` | Última reconciliación agenda ↔ BD |
+| `timezone` | Zona horaria del scheduler |
+| `misfire_grace_seconds` | `SCHEDULER_MISFIRE_GRACE_SECONDS` efectivo |
+
+`403` para operator/viewer (permiso `scheduler.read` solo de admin).
 
 ---
 

@@ -65,6 +65,13 @@ Variables principales del `.env`:
 | `EXECUTION_TIMEOUT_SECONDS` | Timeout por ejecución de script (1–300) | `60` |
 | `EXECUTION_OUTPUT_MAX_CHARS` | Recorte de `stdout`/`stderr` por ejecución (1024–1M) | `1024` |
 | `EXECUTION_SCRIPTS_DIR` | Directorio raíz de la allow-list (vacío → `backend/scripts_allowlist/`) | *(vacío)* |
+| `SCHEDULER_ENABLED` | Activa el planificador interno en el arranque | `true` |
+| `SCHEDULER_TIMEZONE` | Zona horaria del scheduler (IANA, p. ej. `America/Lima`) | `America/Lima` |
+| `SCHEDULER_MISFIRE_GRACE_SECONDS` | Ventana para aceptar un disparo atrasado (0–86400) | `90` |
+| `SCHEDULER_SYNC_INTERVAL_SECONDS` | Intervalo de reconciliación agenda ↔ BD (5–86400) | `30` |
+
+> El planificador es **interno** (no toca el crontab del sistema). Ver
+> `docs/scheduler.md`.
 
 ### 5. Inicializar base de datos y usuario administrador
 
@@ -123,6 +130,24 @@ uvicorn app.main:app --reload --port 8000
 1. Abrir `http://localhost:8000/pages/login.html`.
 2. Iniciar sesión con el usuario administrador creado.
 3. Comprobar que el dashboard muestra usuario, rol y estado del sistema.
+
+## Instalación con Docker (alternativa)
+
+Requisitos: Docker Desktop con WSL2 (o engine Docker + compose).
+
+```bash
+# Desde la raíz del proyecto
+cp .env.docker.example .env.docker   # rellenar SECRET_KEY y ADMIN_PASSWORD
+docker compose up -d --build
+```
+
+- Panel: `http://localhost:8000/`
+- Estado: `docker compose ps` → `STATUS: Up (healthy)`.
+- Logs: `docker compose logs -f`.
+- DB, logs y allow-list de scripts en volúmenes nombrados (persistentes).
+
+Guía completa (volúmenes, backup, reseteo, producción):
+[`docs/containerization.md`](containerization.md).
 
 ## Solución de problemas
 

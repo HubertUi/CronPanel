@@ -4,7 +4,8 @@ Panel web para la administración, automatización, monitoreo y auditoría de ta
 programadas mediante `cron`/`crontab` en sistemas Linux, con orientación
 profesional a ciberseguridad.
 
-> **Estado actual: Fase 4 completada** (scripts allow-list + ejecución segura).
+> **Estado actual: Fase 5 completada** (scripts allow-list + ejecución segura +
+> contenedor Docker + **planificador interno**).
 > Este documento refleja **únicamente** lo implementado hasta la fecha.
 > Las funcionalidades pendientes se listan en el apartado [Roadmap](#roadmap).
 
@@ -56,7 +57,15 @@ acciones y administración de usuarios con roles y permisos.
 - **Historial de ejecuciones**: `executions.html` con filtros por estado y
   modal de salida; alcance por propiedad (nunca se filtran ejecuciones ajenas).
   El `command` libre de la tarea **nunca** se ejecuta.
-- Suite de pruebas automatizadas (162 tests).
+- **Planificador interno (Fase 5)**: las automatizaciones activas con script
+  enlazado se ejecutan solas con **APScheduler** dentro del proceso FastAPI;
+  sin tocar el crontab del host. Agenda armada al arranque, cambios en caliente
+  al editar/pausar/borrar, `next_run_at` y última ejecución en el listado, y
+  saltos registrados en auditoría (`EXECUTION_SKIPPED`). Ejecución siempre vía
+  el motor seguro de la Fase 4 (`trigger="scheduled"`, actor `system`).
+- **Empaquetado Docker**: imagen Ubuntu 24.04 con `docker-compose` (backend +
+  frontend en un solo contenedor, volúmenes para BD/logs/allow-list).
+- Suite de pruebas automatizadas (182 tests).
 
 ## Tecnologías
 
@@ -88,13 +97,13 @@ CronPanel/
 │   │   ├── repositories/        # user_repository, role_repository, audit_repository, revoked_token_repository, cron_job_repository, script_repository, execution_repository
 │   │   ├── utils/               # datetime helpers, request helpers, cron_validator
 │   │   ├── execution/           # runner seguro: policy.py (allow-list) + executor.py
-│   │   └── cron/                # (reservado: gestor de crontab)
+│   │   └── scheduler/           # planificador interno (Fase 5): service, jobs, registry
 │   ├── alembic/                 # Migraciones de esquema
 │   │   ├── env.py
 │   │   ├── script.py.mako
 │   │   └── versions/            # 0001_initial_schema, 0002_phase2_security, 0003_cron_jobs, 0004_executions
 │   ├── alembic.ini
-│   ├── tests/                   # pytest: 162 tests
+│   ├── tests/                   # pytest: 182 tests
 │   ├── scripts_allowlist/       # directorio por defecto de la allow-list (hello.py, boom.py, sleep.py)
 │   ├── requirements.txt
 │   └── .env.example
@@ -102,7 +111,11 @@ CronPanel/
 │   ├── index.html               # Redirección según sesión
 │   ├── pages/                   # login, dashboard, cron-jobs, scripts, executions
 │   └── assets/                  # css/ y js/ modulares
-├── docs/                        # architecture, security, installation, api, development, cron-jobs, execution
+├── docs/                        # architecture, security, installation, api, development, cron-jobs, execution, containerization, scheduler
+├── Dockerfile                   # imagen Ubuntu 24.04 (backend + frontend)
+├── docker-compose.yml           # servicio cronpanel + volúmenes nombrados
+├── .env.docker.example          # plantilla del entorno del contenedor
+├── .dockerignore
 ├── .gitignore
 ├── LICENSE
 └── README.md
@@ -163,6 +176,21 @@ uvicorn app.main:app --reload --port 8000
 
 El frontend se sirve como estáticos desde el propio backend; no necesita servidor adicional.
 
+## Ejecución con Docker
+
+Requiere Docker Desktop (WSL2) o engine Docker + compose:
+
+```bash
+cp .env.docker.example .env.docker   # rellenar SECRET_KEY y ADMIN_PASSWORD
+docker compose up -d --build
+```
+
+- Panel: `http://localhost:8000/`
+- `docker compose ps` para estado (`Up (healthy)`); `docker compose logs -f` para logs.
+- BD, logs y allow-list de scripts en volúmenes nombrados (persistentes).
+
+Guía completa: [`docs/containerization.md`](docs/containerization.md).
+
 ## Pruebas
 
 ```bash
@@ -174,7 +202,8 @@ Cobertura actual: autenticación, seguridad (hashing/JWT), permisos RBAC,
 health check, manejo de errores estructurados, validador de expresiones cron,
 CRUD de tareas, propiedad/permisos, historial, auditoría, no-ejecución del
 `command`, registro/evaluación de scripts, ejecución segura (timeout/recorte/
-argv) y no-uso del crontab.
+argv), planificador interno (agenda, cambios en caliente, saltos, RBAC del
+status) y no-uso del crontab.
 
 ## Roles actuales
 
@@ -202,10 +231,14 @@ scripts** (registrar/actualizar/borrar) requiere ser `admin`.
 - El runner (`app/execution/`) es el **único** importador de `subprocess`
   (test estático AST) y el crontab del sistema nunca se toca (spy de runtime).
 - Cada ejecución se persiste (`executions`) y audita
-  (`EXECUTION_STARTED/SUCCEEDED/FAILED/TIMED_OUT`); solo manual y síncrona por
-  ahora (sin planificador).
+  (`EXECUTION_STARTED/SUCCEEDED/FAILED/TIMED_OUT`).
+- **Fase 5**: las tareas activas con script enlazado se ejecutan solas
+  (`trigger="scheduled"`, actor `system`) mediante el **planificador interno**
+  (`app/scheduler/`, APScheduler en el mismo proceso), sin tocar el crontab del
+  host; la ejecución siempre delega en este motor seguro.
 
-Detalle completo en [`docs/execution.md`](docs/execution.md).
+Detalle completo en [`docs/execution.md`](docs/execution.md) y
+[`docs/scheduler.md`](docs/scheduler.md).
 
 ## Seguridad implementada
 
@@ -244,15 +277,16 @@ Fases pendientes sobre esta base (en orden acordado):
 3. ~~Modelo de tareas cron (CRUD de automatizaciones) + RBAC en endpoints +
    validador de expresiones cron + historial por tarea~~ ✔ Fase 3
 4. ~~Módulo de scripts (allow-list) + ejecución segura + historial de ejecuciones~~ ✔ Fase 4
-5. Constructor visual de expresiones cron (refinamiento del validador)
-6. Gestor de crontab (lectura/instalación controlada, importación)
-7. Planificador del motor de ejecución (hoy solo ejecución manual)
-8. Dashboard con métricas reales
-9. Auditoría de acciones (página)
-10. Administración de usuarios/roles (páginas frontend)
-11. Hardening de seguridad
-12. Ampliación de testing
-13. Documentación final y scripts de instalación Linux
+5. ~~Empaquetado en contenedor Docker (Ubuntu + docker-compose)~~ ✔ contenedorización entregada
+6. ~~Planificador del motor de ejecución (ejecución automática por agenda)~~ ✔ Fase 5
+7. Constructor visual de expresiones cron (refinamiento del validador)
+8. Gestor de crontab (lectura/instalación controlada, importación)
+9. Dashboard con métricas reales
+10. Auditoría de acciones (página)
+11. Administración de usuarios/roles (páginas frontend)
+12. Hardening de seguridad
+13. Ampliación de testing
+14. Documentación final y scripts de instalación Linux
 
 ## Documentación
 
@@ -262,6 +296,8 @@ Fases pendientes sobre esta base (en orden acordado):
 - [`docs/api.md`](docs/api.md) — referencia de la API actual
 - [`docs/cron-jobs.md`](docs/cron-jobs.md) — módulo de tareas cron/crontab
 - [`docs/execution.md`](docs/execution.md) — motor de ejecución segura (Fase 4)
+- [`docs/containerization.md`](docs/containerization.md) — contenedor Docker (contenedorización entregada)
+- [`docs/scheduler.md`](docs/scheduler.md) — planificador interno (Fase 5)
 - [`docs/development.md`](docs/development.md) — guía para desarrolladores
 
 ## Licencia

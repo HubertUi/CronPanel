@@ -1,6 +1,6 @@
 # Arquitectura — CronPanel
 
-> Documento actualizado a la **Fase 4**. Describe lo implementado
+> Documento actualizado a la **Fase 5**. Describe lo implementado
 > y las decisiones que condicionan las fases futuras.
 
 ## Principio general
@@ -47,6 +47,7 @@ Reglas aplicadas:
 | `app/utils/datetime.py` | Helpers `utc_now()`, `ensure_utc()` (SQLite-safe) |
 | `app/utils/request.py` | `get_client_ip()` extractor de IP |
 | `app/execution/` | Runner seguro: `policy.py` (allow-list), `executor.py` (único importador de `subprocess`) |
+| `app/scheduler/` | Planificador interno (Fase 5): `service.py` (CronScheduler, única capa que habla con APScheduler), `jobs.py` (callback de disparo → motor de Fase 4), `registry.py` (singleton + notificaciones) |
 | `frontend/` | SPA mínima sin framework servida como estáticos |
 | `alembic/` | Migraciones de esquema (env.py, versions/) |
 
@@ -140,7 +141,7 @@ scripts                                executions
 id           PK                        id          PK
 name         UNIQUE                    cron_job_id FK → cron_jobs.id (SET NULL)
 description                            script_id   FK → scripts.id  (SET NULL)
-path         UNIQUE (abs, en allow-list)  trigger     (manual)
+path         UNIQUE (abs, en allow-list)  trigger     (manual | scheduled)
 is_enabled                            status      (running/success/failed/timed_out)
 is_deleted                             exit_code
 created_by   FK → users.id (SET NULL)  stdout      (recortado)
@@ -150,6 +151,10 @@ created_at / updated_at                stderr
                                        username / ip_address  (denormalizados)
                                        started_at / finished_at
 ```
+
+`trigger` es `manual` para `POST .../execute` y `scheduled` para las
+ejecuciones lanzadas por el planificador interno (actor de auditoría `system`,
+`user_id=None`); las constantes viven en `app/core/execution_status.py`.
 
 Propiedades clave: borrado **suave** de scripts (bloqueado con `409` si una
 tarea no borrada lo referencia), FKs `SET NULL` para conservar historial de
@@ -207,6 +212,38 @@ ejecuciones y de tareas, y `executions` inmutable una vez finalizada.
   operator lo recibe (`scripts.read`, `executions.read`, `executions.execute`)
   y viewer conserva lectura (`scripts.read`, `executions.read`). Escribir
   scripts sigue siendo solo admin.
+
+## Decisiones técnicas del planificador (Fase 5)
+
+- **Scheduler interno en el único proceso uvicorn**: `BackgroundScheduler` (APScheduler
+  3.x) arranca/para en el lifespan de FastAPI. No hay contenedor separado: el
+  alcance actual no lo justifica y mantiene el despliegue de un solo servicio.
+- **Sin tocar el crontab del host**: el scheduler escribe únicamente en
+  memoria/BD; no invoca `crontab` ni modifica `/etc/crontab`, `/etc/cron.d` o
+  `/var/spool/cron`. Garantizado otra vez por el test AST (los módulos de
+  `app/scheduler/` no importan `subprocess`) y por el spy de runtime.
+- **La BD es la fuente de verdad**: `sync_from_db()` reconcilia la agenda al
+  arrancar y en el job `cronpanel:resync` (cada `SCHEDULER_SYNC_INTERVAL_SECONDS`).
+  Las rutas notifican cambios tras el commit (`notify_job_changed` /
+  `notify_job_removed` / `resync`) para efectos inmediatos sin reiniciar.
+- **Un job por tarea con id estable** `cronpanel:cron_job:<id>` y
+  `replace_existing=True`: nunca se duplican horarios. `max_instances=1` +
+  `has_running_execution()` en BD impiden dos ejecuciones simultáneas de la
+  misma tarea; `coalesce=True` + misfire acotado (90 s) evitan ráfagas tras un
+  reinicio del contenedor.
+- **El disparo reutiliza el motor de Fase 4**: el callback
+  (`run_scheduled_job`) revalida el estado en BD y delega en
+  `execution_service.run_scheduled_cron_job` (mismo pipeline seguro, con
+  `trigger="scheduled"` y actor `system`). El planificador en sí no ejecuta
+  nada.
+- **Expresión cron única**: `CronTrigger.from_crontab` consume la expresión
+  normalizada por `cron_validator`; sin segundo parser ni sintaxis divergente.
+- **Saltos auditables**: un disparo que no procede (tarea ya corriendo, pausada,
+  borrada o script no disponible) genera `EXECUTION_SKIPPED` en `audit_logs` con
+  el motivo; nada se pierde silenciosamente.
+- **Límite para producción**: un solo worker (SQLite). Si algún día hubiera
+  varios workers, cada uno tendría su propia agenda y habría que extraer el
+  scheduler a un proceso dedicado (documentado en `docs/scheduler.md`).
 
 ## Decisiones técnicas relevantes (Fases 1-2)
 

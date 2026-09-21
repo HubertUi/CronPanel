@@ -43,7 +43,8 @@ Estructura de tests:
 | `test_cron_validator.py` | Validador de expresiones cron: inválidas, validas, normalización, descripción |
 | `test_cron_jobs.py` | CRUD de tareas, propiedad (404/403), RBAC, historial, auditoría, no-ejecución (AST), enlace de script y ejecución manual |
 | `test_scripts.py` | Registro en allow-list, rechazos de ruta (relativa/fuera/symlink), RBAC, auditoría, borrado suave y bloqueo de borrado en uso |
-| `test_executions.py` | Resultados (éxito/fallo/timeout), recorte de salida, rechazos previos (tarea inactiva/sin script), RBAC/propiedad, argv seguro, alcance por filtros, contrato AST y spy de crontab |
+| `test_executions.py` | Resultados (éxito/fallo/timeout), recorte de salida, rechazos previos (tarea inactiva/sin script), RBAC/propiedad, argv seguro, alcance por filtros, contrato AST (incl. scheduler) y spy de crontab |
+| `test_scheduler.py` | Planificador interno (Fase 5): ids estables sin duplicados, tz, `next_run`, sync/filtros de elegibilidad, cambios en caliente, disparo real (trigger `scheduled`, actor `system`), saltos `EXECUTION_SKIPPED`, argv seguro y RBAC del status |
 
 ## Convenciones del proyecto
 
@@ -101,6 +102,26 @@ utils/       → helpers genéricos (datetime, request)
 - Propiedad replica la de tareas: ejecuciones/lecturas de tarea ajena → 404
   (o 403 en ejecución).
 
+### Reglas del planificador (Fase 5)
+
+- **El scheduler no ejecuta procesos**: `app/scheduler/` solo arma horarios con
+  APScheduler y en cada disparo delega en `execution_service` (mismo runner de
+  la Fase 4). Prohibido importar `subprocess` o tocar crontab en `app/scheduler/`
+  (lo verifica el test AST).
+- **La BD es la fuente de verdad**; el registrador es solo proyección. Tras el
+  commit de una operación de tarea/script, notifica vía
+  `app/scheduler/registry` (`notify_job_changed` / `notify_job_removed` /
+  `resync`); si el scheduler está apagado, las llamadas son no-op y el `resync`
+  de red de seguridad lo reconcilia.
+- **Nunca duplicar horarios**: un job por tarea con el id estable
+  `cronpanel:cron_job:<id>` (`replace_existing=True`). Si una tarea no es
+  elegible (pausada/borrada/sin script/script deshabilitado), su job se retira.
+- **Nada se ejecuta al arrancar**: solo se arma; y `coalesce=True` + misfire
+  acotado evitan ráfagas tras reinicios.
+- Los tests del scheduler no dependen del tiempo real: se instancian
+  directamente (`CronScheduler`) y el disparo se invoca sincrónicamente
+  (`run_scheduled_job`); `SCHEDULER_ENABLED=false` en `conftest.py`.
+
 ### Reglas del módulo de tareas cron
 
 - **El `command` nunca se ejecuta.** Prohibidos aquí `subprocess`,
@@ -155,8 +176,9 @@ en modo offline/check). En desarrollo, las tablas se crean con `create_all()`.
 ## Orden de fases acordado
 
 Fase 1 (completada) → 2 autenticación completa ✔ → 3 tareas cron ✔ → 4
-scripts + ejecución segura + historial de ejecuciones ✔ → 5 cron builder → 6
-cron manager → 7 planificador → 8 dashboard → 9 auditoría/usuarios (frontend)
-→ 10 hardening → 11 testing → 12 documentación final.
+scripts + ejecución segura + historial de ejecuciones ✔ → contenedorización
+entregada (Docker) ✔ → 5 planificador interno ✔ → 6 cron builder → 7 cron
+manager → 8 dashboard → 9 auditoría/usuarios (frontend) → 10 hardening → 11
+testing → 12 documentación final.
 
 Regla del proyecto: no avanzar de fase hasta que la actual esté estable y probada.

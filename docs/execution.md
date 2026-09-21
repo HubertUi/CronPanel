@@ -12,10 +12,11 @@ muy acotada:
 - Solo puede ejecutarse un **script previamente registrado** que exista dentro
   del directorio allow-list (`EXECUTION_SCRIPTS_DIR`, por defecto
   `backend/scripts_allowlist/`).
-- La ejecución es **manual** (`POST /api/cron-jobs/{id}/execute`) y
-  **síncrona**: no hay planificador, no se toca el crontab del sistema ni se
-  escribe en `/etc/crontab`, `/etc/cron.d` o `/var/spool/cron` (verificado por
-  test estático y por un spy de runtime que vigila que `crontab` nunca se
+- La ejecución es **manual** (`POST /api/cron-jobs/{id}/execute`) o, desde la
+  **Fase 5**, **automática** por el planificador interno (ver `scheduler.md`),
+  y siempre **síncrona**: no hay crontab del sistema ni se escribe en
+  `/etc/crontab`, `/etc/cron.d` o `/var/spool/cron` (verificado por test
+  estático y por un spy de runtime que vigila que `crontab` nunca se
   invoque).
 - El campo `command` libre de la tarea **nunca se ejecuta**. La ejecución usa
   únicamente la ruta del script registrado; el runner no acepta argumentos del
@@ -69,8 +70,13 @@ si algo no es auditable, no se ejecuta.
 | Tabla | Propósito |
 |---|---|
 | `scripts` | `name` (único), `description`, `path` (único), `is_enabled`, `is_deleted`, `created_by → users.id (SET NULL)`, timestamps. Borrado **suave**; bloqueado con `409 SCRIPT_IN_USE` si una tarea no borrada lo referencia |
-| `executions` | `cron_job_id → cron_jobs.id (SET NULL)`, `script_id → scripts.id (SET NULL)`, `trigger` (=`manual`), `status`, `exit_code`, `stdout`, `stderr`, `error`, `duration_ms`, `username`/`ip_address` (denormalizados), `started_at`/`finished_at` |
+| `executions` | `cron_job_id → cron_jobs.id (SET NULL)`, `script_id → scripts.id (SET NULL)`, `trigger` (`manual` \| `scheduled`), `status`, `exit_code`, `stdout`, `stderr`, `error`, `duration_ms`, `username`/`ip_address` (denormalizados), `started_at`/`finished_at` |
 | `cron_jobs` | nuevo `script_id → scripts.id (SET NULL)` opcional |
+
+Desde la Fase 5 el `trigger` puede ser `scheduled` (planificador interno);
+las ejecuciones automáticas usan `username="system"` (usuario virtual,
+`user_id=None` en auditoría). La migración es **0004** (`executions.py`); la
+constante `scheduled` se reutiliza del mismo campo (no hay migración nueva).
 
 La migración es **0004** (`executions.py`). Usa `batch_alter_table` con la FK
 explícita `fk_cron_jobs_script_id_scripts` porque SQLite no puede ALTER
@@ -106,6 +112,12 @@ POST /api/cron-jobs/{id}/execute
 ```
 
 Toda la ejecución es síncrona: el cliente recibe el resultado completo.
+
+La variante **programada** (`run_scheduled_cron_job`) comparte el mismo
+pipeline interno (`_run`) con `trigger="scheduled"` y actor `system`; no aplica
+RBAC/ownership (no hay usuario HTTP) pero sí toda la política de la allow-list.
+El planificador la invoca en cada disparo tras revalidar el estado de la tarea
+(ver `scheduler.md`).
 
 ## Audiencia y permisos
 
@@ -158,7 +170,8 @@ Toda la ejecución es síncrona: el cliente recibe el resultado completo.
   RBAC y propiedad (`403`/`404`), espía de `argv` = `[sys.executable, path]`,
   alcance de listados por propiedad, filtros por `status`/`job_id`, contrato
   AST (único importador de `subprocess`, sin `shell=True`/`os.system`/
-  `eval`/`exec`, sin rutas de crontab) y spy de runtime que confirma que
+  `eval`/`exec`, sin rutas de crontab — incluidos los módulos de
+  `app/scheduler/` desde la Fase 5) y spy de runtime que confirma que
   `crontab` nunca se invoca.
 - El smoke test local (`backend/smoke_test.py`, **gitignored**) recorre el
   flujo completo: registrar script → enlazar a tarea → ejecutar → verificar

@@ -1,6 +1,6 @@
 # Seguridad — CronPanel
 
-> Medidas implementadas hasta la Fase 4 y controles planificados.
+> Medidas implementadas hasta la Fase 5 y controles planificados.
 > Prioridad del proyecto: SEGURIDAD > ARQUITECTURA > MANTENIBILIDAD >
 > FUNCIONALIDAD > INTERFAZ.
 
@@ -84,6 +84,7 @@ Acciones registradas:
 | `EXECUTION_SUCCEEDED` | Ejecución completada con éxito |
 | `EXECUTION_FAILED` | Ejecución finalizada con error (exit != 0) |
 | `EXECUTION_TIMED_OUT` | Ejecución cancelada por timeout |
+| `EXECUTION_SKIPPED` | Disparo del planificador que no procedió (tarea ya corriendo, pausada/borrada o script no disponible); registra el motivo |
 
 **Regla de seguridad**: los detalles de auditoría nunca contienen contraseñas,
 tokens ni secretos. La función `sanitize_details()` filtra claves sensibles
@@ -91,20 +92,27 @@ como defense in depth. Además, **las entradas de auditoría de tareas cron
 nunca incluyen el comando** (`command`), por diseño y con test dedicado
 (la difusión del comando en la vista global de auditoría no es deseable). Las
 entradas de `SCRIPT_*` no registran la ruta del script; las de `EXECUTION_*`
-no incluyen el contenido de `stdout`/`stderr`.
+no incluyen el contenido de `stdout`/`stderr`. `EXECUTION_SKIPPED` registra
+solo `cron_job_id`, `cron_job_name` y el motivo.
 
 ### Tareas cron (Fase 3)
 
-- **El `command` libre nunca se ejecuta** (sigue siendo cierto en Fase 4): el
+- **El `command` libre nunca se ejecuta** (sigue siendo cierto en Fase 5): el
   módulo de tareas es de datos de programación. Prohibidos por diseño y
-  verificados por un test estático (AST sobre los módulos de tareas):
+  verificados por un test estático (AST sobre los módulos de tareas, ejecución
+  y scheduler):
   `subprocess`, `os.system`, `os.popen`, `shell=True`, `eval/exec`,
   y cualquier escritura en el crontab del sistema (`/etc/crontab`,
   `/var/spool/cron`). El frontend informa explícitamente de que el comando se
   almacena como dato y nunca se ejecuta.
-- En Fase 4 la única ejecución posible es la de un **script de la allow-list**
+- En Fases 4-5 la única ejecución posible es la de un **script de la allow-list**
   enlazado a la tarea (ver [Ejecución segura](#ejecucin-segura-fase-4)); el
-  `command` de la tarea se ignora por completo en la ejecución.
+  `command` de la tarea se ignora por completo en la ejecución, tanto manual
+  como la del planificador.
+- **El planificador interno no amplía la superficie de ejecución**: dispara,
+  pero cualquier ejecución pasa siempre por el motor seguro de la Fase 4 y por
+  sus comprobaciones (allow-list, script habilitado, entorno mínimo, timeout).
+  El scheduler en sí no ejecuta procesos ni toca el crontab del host.
 - **Autorización por rol + propiedad**:
   - `require_permissions(cron_jobs.*)`: leer/crear/editar/activar/eliminar.
   - El servicio valida la **propiedad** (o `is_full_access_role()` para admin).
@@ -221,6 +229,25 @@ El runner (`app/execution/`) solo ejecuta scripts registrados por admin:
 7. **Contrato garantizado por tests**: AST estático (único importador de
    `subprocess`, sin `shell=True`/`os.system`/`os.popen`/`eval`/`exec`/rutas
    de crontab) + spy de runtime que vigila que `crontab` jamás se invoque.
+
+### Planificador interno (Fase 5)
+
+- **El disparo es automático pero la ejecución no**: `app/scheduler/` (APScheduler
+  dentro del mismo proceso) arma horarios a partir de `cron_jobs` activos y con
+  script enlazado, y en cada disparo revalida el estado en BD antes de delegar
+  en el motor de la Fase 4. No hay una segunda vía de ejecución.
+- **El crontab del host sigue intacto**: no se usa `crontab`, no se escriben
+  archivos de cron; solo un job interno `cronpanel:resync` de reconciliación con
+  la BD. Las rutas de tareas/scripts notifican cambios para que no haya estado
+  obsoleto ni dependencia de reinicios.
+- **Anti-doble-ejecución**: `max_instances=1` + `has_running_execution()` en BD.
+  Un disparo no procedente (ya en marcha, pausada, borrada o script no
+  disponible) se registra como `EXECUTION_SKIPPED` con motivo.
+- **Anti-ráfaga**: `coalesce=True` + misfire acotado (90 s). Un reinicio del
+  contenedor no genera una avalancha de ejecuciones atrasadas.
+- **Permiso nuevo**: `scheduler.read` (solo admin) protege
+  `GET /api/scheduler/status`. Operator/viewer no consultan el estado del
+  scheduler.
 
 ## Limitaciones conocidas (aceptadas)
 
